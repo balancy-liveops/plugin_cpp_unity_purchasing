@@ -1,0 +1,24 @@
+{
+    "name": "com.balancy.payments",
+    "version": "1.0.0",
+    "displayName": "Balancy Payments",
+    "description": "In-app purchasing system for Unity games with advanced features",
+    "unity": "2020.3",
+    "documentationUrl": "https://balancy.io/docs/",
+    "changelogUrl": "https://balancy.io/changelog/",
+    "licensesUrl": "https://balancy.io/license/",
+    "dependencies": {
+        "com.unity.purchasing": "4.12.2"
+    },
+    "keywords": [
+        "balancy",
+        "iap",
+        "purchases",
+        "monetization"
+    ],
+    "author": {
+        "name": "Balancy Team",
+        "email": "support@balancy.io",
+        "url": "https://balancy.io"
+    }
+}
