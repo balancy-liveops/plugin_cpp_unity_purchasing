@@ -581,7 +581,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 544b0c4091f3f4e0d9061eca1a51a555, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  paymentConfig: {fileID: 11400000, guid: 2533a6e82f8eb4b5da79091c34758add, type: 2}
   productListContainer: {fileID: 1020229104}
   productItemPrefab: {fileID: 7742954423898729285, guid: 88884aecb418244f9b98c5aa1f6e4c2f, type: 3}
   restorePurchasesButton: {fileID: 1499890283}
@@ -617,7 +616,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   config: {fileID: 11400000, guid: 2533a6e82f8eb4b5da79091c34758add, type: 2}
   initializeOnAwake: 1
-  debugMode: 0
+  debugMode: 1
 --- !u!1 &1020229103
 GameObject:
   m_ObjectHideFlags: 0

@@ -36,6 +36,15 @@ namespace Balancy.Payments
         
         private static UnityPurchaseSystem _instance;
         private ConfigurationBuilder _builder;
+
+        class ProductPublicInfo
+        {
+            public string ProductId;
+            public ProductType Type;
+            public string StoreSpecificId = null;
+        }
+        
+        private List<ProductPublicInfo> _products = new List<ProductPublicInfo>();
         
         // Store our product definitions
         private Dictionary<string, ProductDefinition> _productDefinitions = new Dictionary<string, ProductDefinition>();
@@ -114,6 +123,9 @@ namespace Balancy.Payments
                 // Create a builder for IAP
                 var module = GetPurchasingModule();
                 _builder = ConfigurationBuilder.Instance(module);
+
+                foreach (var productInfo in _products)
+                    AssignProductDefinition(productInfo);
                 
                 // Process any pending purchases from previous sessions
                 ProcessPendingPurchases();
@@ -136,6 +148,20 @@ namespace Balancy.Payments
         /// </summary>
         public void AddProduct(string productId, ProductType type, string storeSpecificId = null)
         {
+            _products.Add(new ProductPublicInfo
+            {
+                ProductId = productId,
+                Type = type,
+                StoreSpecificId = storeSpecificId
+            });
+        }
+        
+        private void AssignProductDefinition(ProductPublicInfo productInfo)
+        {
+            string productId = productInfo.ProductId;
+            ProductType type = productInfo.Type;
+            string storeSpecificId = productInfo.StoreSpecificId;
+            
             if (_isInitialized)
             {
                 Debug.LogWarning("Cannot add products after initialization. Please add products before calling Initialize().");
@@ -676,9 +702,11 @@ namespace Balancy.Payments
         {
             var module = StandardPurchasingModule.Instance();
             
+#if UNITY_EDITOR
             // Configure the module based on platform-specific needs
             module.useFakeStoreUIMode = FakeStoreUIMode.StandardUser;
-            
+            module.useFakeStoreAlways = true;
+#endif
             return module;
         }
 

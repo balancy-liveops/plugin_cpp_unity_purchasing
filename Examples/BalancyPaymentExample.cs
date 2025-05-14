@@ -13,7 +13,6 @@ namespace Balancy.Payments.Examples
     /// </summary>
     public class BalancyPaymentExample : MonoBehaviour
     {
-        [SerializeField] private BalancyPaymentConfig paymentConfig;
         [SerializeField] private Transform productListContainer;
         [SerializeField] private GameObject productItemPrefab;
         [SerializeField] private Button restorePurchasesButton;
@@ -22,12 +21,6 @@ namespace Balancy.Payments.Examples
         
         private void Start()
         {
-            // Initialize manager
-            BalancyPaymentManager.Instance.Initialize(
-                paymentConfig,
-                OnInitializeSuccess,
-                OnInitializeFailed);
-            
             // Set up buttons
             if (restorePurchasesButton != null)
             {
@@ -41,6 +34,26 @@ namespace Balancy.Payments.Examples
             
             // Update status
             UpdateStatus("Initializing payment system...");
+            
+            // Check if the payment system is already initialized
+            if (BalancyPaymentManager.Instance.IsInitialized())
+            {
+                OnInitializeSuccess();
+            }
+            else
+            {
+                // If not, listen for initialization events
+                BalancyPaymentManager.Instance.OnPurchaseCompleted += HandlePurchaseCompleted;
+                
+                // Update status to show we're waiting
+                UpdateStatus("Initializing payment system...");
+            }
+        }
+        
+        private void HandlePurchaseCompleted(PurchaseResult result)
+        {
+            // Refresh our product list when purchases complete
+            LoadProducts();
         }
         
         /// <summary>
