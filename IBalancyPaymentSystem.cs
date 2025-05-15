@@ -10,9 +10,9 @@ namespace Balancy.Payments
     /// </summary>
     public enum ProductType
     {
-        Consumable,
-        NonConsumable,
-        Subscription
+        Consumable = 1,
+        NonConsumable = 2,
+        Subscription = 3
     }
 
     /// <summary>

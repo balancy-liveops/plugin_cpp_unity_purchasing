@@ -58,7 +58,7 @@ namespace Balancy.Payments
         /// <summary>
         /// Get the singleton instance
         /// </summary>
-        public static UnityPurchaseSystem Instance
+        internal static UnityPurchaseSystem Instance
         {
             get
             {
@@ -547,6 +547,9 @@ namespace Balancy.Payments
             // For this example, we'll just mark it as ready to finalize
             
             Debug.Log($"Validating purchase receipt for {purchase.ProductId}");
+            Debug.Log($"Receipt {purchase.Receipt}");
+            Debug.Log($"Status {purchase.Status}");
+            Debug.Log($"Store {purchase.Store}");
             
             // Simulate validation success
             bool validationSuccess = true;

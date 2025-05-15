@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using UnityEngine;
 
 namespace Balancy.Payments
@@ -19,19 +20,18 @@ namespace Balancy.Payments
         /// <summary>
         /// Get the singleton instance
         /// </summary>
-        public static BalancyPaymentManager Instance
+        private static BalancyPaymentManager Instance
         {
             get
             {
                 if (_instance == null)
                 {
-                    // Try to find existing instance
                     _instance = FindObjectOfType<BalancyPaymentManager>();
                     
-                    // Create new instance if none exists
                     if (_instance == null)
                     {
                         GameObject go = new GameObject("BalancyPaymentManager");
+                        go.hideFlags = HideFlags.HideAndDontSave;
                         _instance = go.AddComponent<BalancyPaymentManager>();
                         DontDestroyOnLoad(go);
                     }
@@ -46,8 +46,8 @@ namespace Balancy.Payments
         #region Inspector Fields
 
         [SerializeField] private BalancyPaymentConfig config;
-        [SerializeField] private bool initializeOnAwake = true;
-        [SerializeField] private bool debugMode = false;
+        // [SerializeField] private bool initializeOnAwake = true;
+        [SerializeField] private bool debugMode = true;
 
         #endregion
         
@@ -81,6 +81,7 @@ namespace Balancy.Payments
         /// Event fired when a purchase is completed
         /// </summary>
         public event Action<PurchaseResult> OnPurchaseCompleted;
+        public event Action OnInitialized;
 
         /// <summary>
         /// Event fired when purchases are restored
@@ -91,23 +92,18 @@ namespace Balancy.Payments
         
         #region Unity Lifecycle
 
-        private void Awake()
+        [RuntimeInitializeOnLoadMethod]
+        private static void Init()
         {
-            // Ensure singleton behavior
-            if (_instance != null && _instance != this)
-            {
-                Destroy(gameObject);
-                return;
-            }
-            
-            _instance = this;
-            DontDestroyOnLoad(gameObject);
-            
-            // Initialize if requested
-            if (initializeOnAwake)
-            {
-                Initialize();
-            }
+            Debug.LogError("SUBS");
+            Balancy.Controller.OnCloudSynced -= OnCloudSynced;
+            Balancy.Controller.OnCloudSynced += OnCloudSynced;
+        }
+
+        private static void OnCloudSynced()
+        {
+            Debug.LogError("INIT");
+            Instance.Initialize();
         }
 
         private void OnApplicationPause(bool pauseStatus)
@@ -129,7 +125,7 @@ namespace Balancy.Payments
         /// <param name="paymentConfig">Configuration to use</param>
         /// <param name="onInitialized">Callback when initialized</param>
         /// <param name="onInitializeFailed">Callback when initialization fails</param>
-        public void Initialize(BalancyPaymentConfig paymentConfig = null, Action onInitialized = null, Action<string> onInitializeFailed = null)
+        private void Initialize(BalancyPaymentConfig paymentConfig = null, Action onInitialized = null, Action<string> onInitializeFailed = null)
         {
             if (_isInitialized)
             {
@@ -149,34 +145,58 @@ namespace Balancy.Payments
             }
             
             // Use provided config or fallback to serialized one
-            BalancyPaymentConfig configToUse = paymentConfig ?? config;
-            
-            if (configToUse == null)
-            {
-                LogError("No payment configuration provided");
-                _onInitializeFailed?.Invoke("No payment configuration provided");
-                _onInitialized = null;
-                _onInitializeFailed = null;
-                return;
-            }
+            // BalancyPaymentConfig configToUse = paymentConfig ?? config;
+            //
+            // if (configToUse == null)
+            // {
+            //     LogError("No payment configuration provided");
+            //     _onInitializeFailed?.Invoke("No payment configuration provided");
+            //     _onInitialized = null;
+            //     _onInitializeFailed = null;
+            //     return;
+            // }
             
             // Create payment system
             _paymentSystem = CreatePaymentSystem();
             
             // Apply configuration
-            configToUse.ApplyConfiguration(_paymentSystem);
+            // configToUse.ApplyConfiguration(_paymentSystem);
+
+            if (_paymentSystem is UnityPurchaseSystem unitySystem)
+                ApplyConfig(unitySystem);
             
             // Create receipt validator if needed
-            if (configToUse.ValidateReceipts && !string.IsNullOrEmpty(configToUse.ValidationServiceUrl))
-            {
-                _receiptValidator = new ReceiptValidator(
-                    configToUse.ValidationServiceUrl,
-                    configToUse.ValidationSecret,
-                    this);
-            }
+            // if (configToUse.ValidateReceipts && !string.IsNullOrEmpty(configToUse.ValidationServiceUrl))
+            // {
+            //     _receiptValidator = new ReceiptValidator(
+            //         configToUse.ValidationServiceUrl,
+            //         configToUse.ValidationSecret,
+            //         this);
+            // }
             
             // Initialize the payment system
             _paymentSystem.Initialize(OnPaymentSystemInitialized, OnPaymentSystemInitializeFailed);
+        }
+
+        private void ApplyConfig(UnityPurchaseSystem unitySystem)
+        {
+            var productsAndTypes = Balancy.API.GetProductsIdAndType();
+            //TODO - implement this
+            // unitySystem.AutoFinishTransactions = AutoFinishTransactions;
+            unitySystem.UnityEnvironment = "production";
+            
+            for (int i = 0; i < productsAndTypes.Length; i += 2)
+            {
+                var id = productsAndTypes[i];
+                if (int.TryParse(productsAndTypes[i + 1], out var type))
+                {
+                    unitySystem.AddProduct(id, (ProductType)type);
+                }
+                else
+                {
+                    Debug.LogError("Failed to parse type " + id + " : " + productsAndTypes[i + 1]);
+                }
+            }
         }
 
         /// <summary>
@@ -524,6 +544,7 @@ namespace Balancy.Payments
             _onInitialized = null;
             _onInitializeFailed = null;
             callback?.Invoke();
+            OnInitialized?.Invoke();
         }
 
         /// <summary>
