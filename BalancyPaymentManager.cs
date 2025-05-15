@@ -26,7 +26,7 @@ namespace Balancy.Payments
             {
                 if (_instance == null)
                 {
-                    _instance = FindObjectOfType<BalancyPaymentManager>();
+                    _instance = FindAnyObjectByType<BalancyPaymentManager>();
                     
                     if (_instance == null)
                     {

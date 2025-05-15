@@ -30,7 +30,6 @@ namespace Balancy.Payments
         [SerializeField] private bool autoInitializeOnStart = true;
         [SerializeField] private bool autoFinishTransactions = true;
         [SerializeField] private string unityEnvironment = "production";
-        [SerializeField] private bool useUDP = false;
         [SerializeField] private bool enableLogging = true;
 
         [Header("Validation")]

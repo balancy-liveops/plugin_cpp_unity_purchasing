@@ -14,7 +14,7 @@ namespace Balancy.Payments
     /// <summary>
     /// Implementation of the Balancy payment system using Unity IAP 4.12.2
     /// </summary>
-    public class UnityPurchaseSystem : IBalancyPaymentSystem, IStoreListener
+    public class UnityPurchaseSystem : IBalancyPaymentSystem, IDetailedStoreListener
     {
         #region Private Fields
 
@@ -736,18 +736,18 @@ namespace Balancy.Payments
         /// <summary>
         /// Called when Apple's restore transactions process completes
         /// </summary>
-        private void OnAppleRestoreTransactionsComplete(bool success)
+        private void OnAppleRestoreTransactionsComplete(bool success, string errorMessage)
         {
-            Debug.Log($"Apple restore transactions completed. Success: {success}");
+            Debug.Log($"Apple restore transactions completed. Success: {success} - Error: {errorMessage}");
             OnRestoreTransactionsComplete(success);
         }
 
         /// <summary>
         /// Called when Google Play's restore transactions process completes
         /// </summary>
-        private void OnGooglePlayRestoreTransactionsComplete(bool success)
+        private void OnGooglePlayRestoreTransactionsComplete(bool success, string errorMessage)
         {
-            Debug.Log($"Google Play restore transactions completed. Success: {success}");
+            Debug.Log($"Google Play restore transactions completed. Success: {success} - Error: {errorMessage}");
             OnRestoreTransactionsComplete(success);
         }
 
@@ -900,6 +900,12 @@ namespace Balancy.Payments
         /// <summary>
         /// Called when a purchase fails
         /// </summary>
+        public void OnPurchaseFailed(Product product, PurchaseFailureDescription failureDescription)
+        {
+            Debug.Log($"!!Purchase failed: {product.definition.id}");
+            OnPurchaseFailed(product, failureDescription.reason);
+        }
+        
         public void OnPurchaseFailed(Product product, PurchaseFailureReason failureReason)
         {
             Debug.Log($"Purchase failed: {product.definition.id}, Reason: {failureReason}");
