@@ -40,7 +40,6 @@ namespace Balancy.Payments
         
         #region Inspector Fields
 
-        [SerializeField] private BalancyPaymentConfig config;
         // [SerializeField] private bool initializeOnAwake = true;
         [SerializeField] private bool debugMode = true;
 
@@ -49,7 +48,6 @@ namespace Balancy.Payments
         #region Private Fields
 
         private IBalancyPaymentSystem _paymentSystem;
-        private ReceiptValidator _receiptValidator;
         private bool _isInitialized;
         private PendingPurchaseManager _pendingPurchaseManager => PendingPurchaseManager.Instance;
         private Action _onInitialized;
@@ -116,7 +114,7 @@ namespace Balancy.Payments
         /// <param name="paymentConfig">Configuration to use</param>
         /// <param name="onInitialized">Callback when initialized</param>
         /// <param name="onInitializeFailed">Callback when initialization fails</param>
-        private void Initialize(BalancyPaymentConfig paymentConfig = null, Action onInitialized = null, Action<string> onInitializeFailed = null)
+        private void Initialize(Action onInitialized = null, Action<string> onInitializeFailed = null)
         {
             if (_isInitialized)
             {
@@ -279,63 +277,35 @@ namespace Balancy.Payments
                 {
                     Log($"Restored {results.Count} purchases");
                     
-                    // Validate each restored purchase if validator is available
-                    if (_receiptValidator != null && results.Count > 0)
+                    for (int i = 0; i < results.Count; i++)
                     {
-                        var validatedResults = new List<PurchaseResult>();
-                        var validationCount = 0;
+                        var result = results[i];
+                        Log($"Restored purchase: {result.ProductId}, Status: {result.Status}");
                         
-                        foreach (var result in results)
-                        {
-                            if (result.Status == PurchaseStatus.Success && result.Receipt != null)
-                            {
-                                ValidateReceipt(result.Receipt, validatedResult =>
-                                {
-                                    if (validatedResult.IsValid)
-                                    {
-                                        validatedResults.Add(result);
-                                    }
-                                    else
-                                    {
-                                        // Add result with failure status
-                                        validatedResults.Add(new PurchaseResult
-                                        {
-                                            Status = PurchaseStatus.Failed,
-                                            ProductId = result.ProductId,
-                                            ErrorMessage = validatedResult.ErrorMessage
-                                        });
-                                    }
-                                    
-                                    validationCount++;
-                                    
-                                    if (validationCount == results.Count)
-                                    {
-                                        // All validations completed
-                                        OnPurchasesRestored?.Invoke(validatedResults);
-                                        callback?.Invoke(validatedResults);
-                                    }
-                                });
-                            }
-                            else
-                            {
-                                validatedResults.Add(result);
-                                validationCount++;
-                                
-                                if (validationCount == results.Count)
-                                {
-                                    // All validations completed
-                                    OnPurchasesRestored?.Invoke(validatedResults);
-                                    callback?.Invoke(validatedResults);
-                                }
-                            }
-                        }
+                        // Validate receipt if needed
+                        // if (result.Status == PurchaseStatus.Restored)
+                        // {
+                        //     ValidateReceipt(result.Receipt, validationResult =>
+                        //     {
+                        //         if (validationResult.IsValid)
+                        //         {
+                        //             result.Status = PurchaseStatus.Validated;
+                        //             result.ErrorMessage = null;
+                        //         }
+                        //         else
+                        //         {
+                        //             result.Status = PurchaseStatus.Invalid;
+                        //             result.ErrorMessage = validationResult.ErrorMessage;
+                        //         }
+                        //         
+                        //         // Invoke callback with the updated result
+                        //         callback?.Invoke(results);
+                        //     });
+                        // }
                     }
-                    else
-                    {
-                        // No validation needed
-                        OnPurchasesRestored?.Invoke(results);
-                        callback?.Invoke(results);
-                    }
+                    
+                    // Validate each restored purchase if validator is available
+                   
                 });
             }, error => callback?.Invoke(new List<PurchaseResult>()));
         }
@@ -410,7 +380,6 @@ namespace Balancy.Payments
             
             if (string.IsNullOrEmpty(productId))
             {
-                Debug.LogError("Product ID is null or empty");
                 Balancy.API.FinalizedHardPurchase(Actions.PurchaseResult.Failed, productInfo, new Actions.PurchaseInfo
                 {
                     ErrorMessage = "Product ID is null or empty"
@@ -438,22 +407,6 @@ namespace Balancy.Payments
         }
         
         /// <summary>
-        /// Validate a receipt with the server
-        /// </summary>
-        private void ValidateReceipt(PurchaseReceipt receipt, Action<ValidationResult> callback)
-        {
-            if (_receiptValidator == null)
-            {
-                callback?.Invoke(new ValidationResult { IsValid = true });
-                return;
-            }
-            
-            Log($"Validating receipt for product: {receipt.ProductId}");
-            
-            _receiptValidator.ValidateReceipt(receipt, callback);
-        }
-
-        /// <summary>
         /// Ensure the payment system is initialized
         /// </summary>
         private void EnsureInitialized(Action onInitialized, Action<string> onFailed)
@@ -466,7 +419,6 @@ namespace Balancy.Payments
             {
                 // Initialize with default config
                 Initialize(
-                    config, 
                     onInitialized, 
                     onFailed);
             }

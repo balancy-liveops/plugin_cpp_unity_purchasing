@@ -75,11 +75,6 @@ namespace Balancy.Payments
         public string UnityEnvironment { get; set; } = "production";
         
         /// <summary>
-        /// Whether to automatically finish transactions after purchase
-        /// </summary>
-        public bool AutoFinishTransactions { get; set; } = true;
-        
-        /// <summary>
         /// Whether to use the UDP (Unity Distribution Portal) store
         /// </summary>
         #endregion
@@ -571,6 +566,13 @@ namespace Balancy.Payments
             {
                 if (validationSuccess)
                 {
+                    var product = _storeController.products.WithID(productInfo?.ProductId);
+                    if (product != null)
+                    {
+                        Debug.LogError("Confirm pending purchase");
+                        _storeController.ConfirmPendingPurchase(product);
+                    }
+                    
                     _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
                     //TODO report to apple for claiming
                 }
@@ -865,7 +867,7 @@ namespace Balancy.Payments
             
             // If we want to control finishing the transaction ourselves, return Complete
             // Otherwise return Pending and call ConfirmPendingPurchase later
-            return AutoFinishTransactions ? PurchaseProcessingResult.Complete : PurchaseProcessingResult.Pending;
+            return PurchaseProcessingResult.Pending;
         }
 
         /// <summary>
