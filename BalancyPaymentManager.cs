@@ -54,7 +54,6 @@ namespace Balancy.Payments
         private PendingPurchaseManager _pendingPurchaseManager => PendingPurchaseManager.Instance;
         private Action _onInitialized;
         private Action<string> _onInitializeFailed;
-        private Dictionary<string, Action<PurchaseResult>> _purchaseCallbacks = new Dictionary<string, Action<PurchaseResult>>();
         
         // Cache of products
         private Dictionary<string, ProductInfo> _productCache = new Dictionary<string, ProductInfo>();
@@ -75,7 +74,6 @@ namespace Balancy.Payments
         /// <summary>
         /// Event fired when a purchase is completed
         /// </summary>
-        public event Action<PurchaseResult> OnPurchaseCompleted;
         public event Action OnInitialized;
 
         /// <summary>
@@ -231,7 +229,7 @@ namespace Balancy.Payments
         /// </summary>
         /// <param name="productId">Product ID</param>
         /// <param name="callback">Callback with purchase result</param>
-        private void PurchaseProduct(Balancy.Actions.BalancyProductInfo productInfo, Action<PurchaseResult> callback)
+        private void PurchaseProduct(Balancy.Actions.BalancyProductInfo productInfo)
         {
             EnsureInitialized(() =>
             {
@@ -239,36 +237,26 @@ namespace Balancy.Payments
                 Log($"Initiating purchase for product: {productId}");
                 
                 // Check for existing pending purchase
-                var pendingPurchase = _pendingPurchaseManager.GetPendingPurchaseByProductId(productId);
-                if (pendingPurchase != null && 
-                    (pendingPurchase.Status == PendingStatus.WaitingForStore || 
-                     pendingPurchase.Status == PendingStatus.ProcessingValidation))
-                {
-                    LogWarning($"Purchase already in progress for product: {productId}");
-                    
-                    callback?.Invoke(new PurchaseResult
-                    {
-                        Status = PurchaseStatus.Pending,
-                        ProductId = productId,
-                        ErrorMessage = "Purchase already in progress"
-                    });
-                    
-                    return;
-                }
+                // var pendingPurchase = _pendingPurchaseManager.GetPendingPurchaseByProductId(productId);
+                // if (pendingPurchase != null && 
+                //     (pendingPurchase.Status == PendingStatus.WaitingForStore || 
+                //      pendingPurchase.Status == PendingStatus.ProcessingValidation))
+                // {
+                //     LogWarning($"Purchase already in progress for product: {productId}");
+                //     
+                //     _paymentSystem.ReportPaymentStatusToBalancy(productInfo, new PurchaseResult
+                //     {
+                //         Status = PurchaseStatus.Pending,
+                //         ProductId = productId,
+                //         ErrorMessage = "Purchase already in progress"
+                //     });
+                //     return;
+                // }
                 
-                // Store callback
-                _purchaseCallbacks[productId] = callback;
-                
-                // Initiate purchase
-                _paymentSystem.PurchaseProduct(productInfo, result =>
-                {
-                    Log($"Purchase result for {productId}: {result.Status}");
-                    
-                    OnPurchaseComplete(productId, result);
-                });
+                _paymentSystem.PurchaseProduct(productInfo);
             }, error =>
             {
-                callback?.Invoke(new PurchaseResult
+                _paymentSystem.ReportPaymentStatusToBalancy(productInfo, new PurchaseResult
                 {
                     Status = PurchaseStatus.Failed,
                     ProductId = productInfo.ProductId,
@@ -429,62 +417,8 @@ namespace Balancy.Payments
                 }, null);
                 return;
             }
-            
-            PurchaseProduct(productInfo, result =>
-            {
-                var purchaseInfo = new Actions.PurchaseInfo
-                {
-                    ProductId = productId,
-                    Receipt = result.Receipt?.Receipt,
-                    CurrencyCode = result.CurrencyCode,
-                    Price = result.Price,
-                    TransactionId = result.TransactionId,
-                    ErrorMessage = result.ErrorMessage
-                };
-                
-                Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status), productInfo, purchaseInfo, (validationSuccess, removeFromPending) =>
-                {
-                    Debug.Log("BEFORE PENDING COUNT: " +  _pendingPurchaseManager.GetAllPendingPurchases().Count);
-                    if (validationSuccess)
-                    {
-                        Debug.LogError("Success - remove pending");
-                        _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
-                        //TODO report to apple for claiming
-                    }
-                    else
-                    {
-                        if (removeFromPending)
-                            _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
-                        else
-                        {
-                            Debug.LogError("Failed - leave in pending");
-                            //Do nothing
-                            // _pendingPurchaseManager.UpdatePendingPurchaseStatus(purchaseInfo.TransactionId,
-                            //     PendingStatus.ProcessingValidation);
-                        }
-                    }
-                    Debug.Log("AFTER PENDING COUNT: " +  _pendingPurchaseManager.GetAllPendingPurchases().Count);
-                });
-            });
-        }
 
-        private static Actions.PurchaseResult ConvertStatusToResult(PurchaseStatus status)
-        {
-            switch (status)
-            {
-                case PurchaseStatus.Success:
-                    return Actions.PurchaseResult.Success;
-                case PurchaseStatus.Failed:
-                case PurchaseStatus.AlreadyOwned:
-                case PurchaseStatus.InvalidProduct:
-                    return Actions.PurchaseResult.Failed;
-                case PurchaseStatus.Pending:
-                    return Actions.PurchaseResult.Pending;
-                case PurchaseStatus.Cancelled:
-                    return Actions.PurchaseResult.Cancelled;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(status), status, null);
-            }
+            PurchaseProduct(productInfo);
         }
 
         /// <summary>
@@ -517,22 +451,6 @@ namespace Balancy.Payments
             Log($"Validating receipt for product: {receipt.ProductId}");
             
             _receiptValidator.ValidateReceipt(receipt, callback);
-        }
-
-        /// <summary>
-        /// Called when a purchase is complete
-        /// </summary>
-        private void OnPurchaseComplete(string productId, PurchaseResult result)
-        {
-            // Notify any registered callbacks
-            if (_purchaseCallbacks.TryGetValue(productId, out var callback))
-            {
-                _purchaseCallbacks.Remove(productId);
-                callback?.Invoke(result);
-            }
-            
-            // Trigger event
-            OnPurchaseCompleted?.Invoke(result);
         }
 
         /// <summary>

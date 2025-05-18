@@ -102,7 +102,7 @@ namespace Balancy.Payments
         
         public string TransactionId { get; set; }
         public string CurrencyCode { get; set; }
-        public decimal Price { get; set; }
+        public float Price { get; set; }
     }
 
     /// <summary>
@@ -135,7 +135,7 @@ namespace Balancy.Payments
         /// </summary>
         /// <param name="productId">Product identifier</param>
         /// <param name="callback">Callback with the purchase result</param>
-        void PurchaseProduct(Balancy.Actions.BalancyProductInfo productInfo, Action<PurchaseResult> callback);
+        void PurchaseProduct(Balancy.Actions.BalancyProductInfo productInfo);
 
         /// <summary>
         /// Finish a transaction (needed on some platforms)
@@ -169,5 +169,7 @@ namespace Balancy.Payments
         bool IsInitialized();
 
         void ProcessPendingPurchases();
+
+        void ReportPaymentStatusToBalancy(Actions.BalancyProductInfo productInfo, PurchaseResult result);
     }
 }

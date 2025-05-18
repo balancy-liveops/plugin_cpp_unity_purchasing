@@ -29,7 +29,6 @@ namespace Balancy.Payments
         private Action _onInitialized;
         private Action<string> _onInitializeFailed;
         
-        private Dictionary<string, Action<PurchaseResult>> _pendingPurchaseCallbacks = new Dictionary<string, Action<PurchaseResult>>();
         private List<ProductInfo> _cachedProducts = new List<ProductInfo>();
         private Action<List<PurchaseResult>> _restorePurchasesCallback;
         private List<PurchaseResult> _restoredPurchases = new List<PurchaseResult>();
@@ -259,29 +258,32 @@ namespace Balancy.Payments
         /// <summary>
         /// Purchase a product
         /// </summary>
-        public void PurchaseProduct(Balancy.Actions.BalancyProductInfo productInfo, Action<PurchaseResult> callback)
+        public void PurchaseProduct(Balancy.Actions.BalancyProductInfo productInfo)
         {
             if (!IsInitialized())
             {
-                Initialize(() => PurchaseProduct(productInfo, callback), 
-                    (error) => callback?.Invoke(new PurchaseResult
+                Initialize(() => PurchaseProduct(productInfo), 
+                    (error) =>
                     {
-                        Status = PurchaseStatus.Failed,
-                        ProductId = productInfo.ProductId,
-                        ErrorMessage = $"Store not initialized: {error}"
-                    }));
+                        ReportPaymentStatusToBalancy(productInfo, new PurchaseResult
+                        {
+                            Status = PurchaseStatus.Failed,
+                            ProductId = productInfo.ProductId,
+                            ErrorMessage = $"Store not initialized: {error}"
+                        });
+                    });
                 return;
             }
 
             var productId = productInfo.ProductId;
             if (_storeController == null)
             {
-                callback?.Invoke(new PurchaseResult
+                ReportPaymentStatusToBalancy(productInfo, new PurchaseResult
                 {
                     Status = PurchaseStatus.Failed,
                     ProductId = productId,
                     ErrorMessage = "Store controller is null"
-                });
+                }); 
                 return;
             }
 
@@ -289,7 +291,7 @@ namespace Balancy.Payments
             var product = _storeController.products.WithID(productId);
             if (product == null || !product.availableToPurchase)
             {
-                callback?.Invoke(new PurchaseResult
+                ReportPaymentStatusToBalancy(productInfo, new PurchaseResult
                 {
                     Status = PurchaseStatus.InvalidProduct,
                     ProductId = productId,
@@ -299,14 +301,8 @@ namespace Balancy.Payments
             }
 
             // Create a pending purchase record
-            var pendingPurchase = _pendingPurchaseManager.AddPendingPurchase(productInfo);
+            _pendingPurchaseManager.AddPendingPurchase(productInfo);
             
-            // Save the callback
-            if (callback != null)
-            {
-                _pendingPurchaseCallbacks[productId] = callback;
-            }
-
             try
             {
                 // Start the purchase flow
@@ -323,17 +319,13 @@ namespace Balancy.Payments
                     null, 
                     PendingStatus.Failed, 
                     ex.Message);
-                
-                if (_pendingPurchaseCallbacks.TryGetValue(productId, out var cb))
+              
+                ReportPaymentStatusToBalancy(productInfo, new PurchaseResult
                 {
-                    _pendingPurchaseCallbacks.Remove(productId);
-                    cb?.Invoke(new PurchaseResult
-                    {
-                        Status = PurchaseStatus.Failed,
-                        ProductId = productId,
-                        ErrorMessage = ex.Message
-                    });
-                }
+                    Status = PurchaseStatus.Failed,
+                    ProductId = productId,
+                    ErrorMessage = ex.Message
+                });
             }
         }
 
@@ -559,17 +551,15 @@ namespace Balancy.Payments
                 Price = purchase.Price,
                 CurrencyCode = purchase.CurrencyCode
             };
-
-            // If we have a callback registered for this product, invoke it
-            if (_pendingPurchaseCallbacks.TryGetValue(purchase.ProductInfo.ProductId, out var callback))
-            {
-                _pendingPurchaseCallbacks.Remove(purchase.ProductInfo.ProductId);
-                callback?.Invoke(result);
-            }
             
+            ReportPaymentStatusToBalancy(purchase.ProductInfo, result);
+        }
+
+        public void ReportPaymentStatusToBalancy(Actions.BalancyProductInfo productInfo, PurchaseResult result)
+        {
             var purchaseInfo = new Actions.PurchaseInfo
             {
-                ProductId = productId,
+                ProductId = productInfo?.ProductId,
                 Receipt = result.Receipt?.Receipt,
                 CurrencyCode = result.CurrencyCode,
                 Price = result.Price,
@@ -579,10 +569,8 @@ namespace Balancy.Payments
                 
             Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status), productInfo, purchaseInfo, (validationSuccess, removeFromPending) =>
             {
-                Debug.Log("BEFORE PENDING COUNT: " +  _pendingPurchaseManager.GetAllPendingPurchases().Count);
                 if (validationSuccess)
                 {
-                    Debug.LogError("Success - remove pending");
                     _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
                     //TODO report to apple for claiming
                 }
@@ -592,20 +580,31 @@ namespace Balancy.Payments
                         _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
                     else
                     {
-                        Debug.LogError("Failed - leave in pending");
                         //Do nothing
                         // _pendingPurchaseManager.UpdatePendingPurchaseStatus(purchaseInfo.TransactionId,
                         //     PendingStatus.ProcessingValidation);
                     }
                 }
-                Debug.Log("AFTER PENDING COUNT: " +  _pendingPurchaseManager.GetAllPendingPurchases().Count);
             });
-
-            // If auto-finish is enabled, finalize the transaction
-            // if (AutoFinishTransactions)
-            // {
-            //     FinishTransaction(purchase.ProductInfo.ProductId, purchase.TransactionId);
-            // }
+        }
+        
+        private static Actions.PurchaseResult ConvertStatusToResult(PurchaseStatus status)
+        {
+            switch (status)
+            {
+                case PurchaseStatus.Success:
+                    return Actions.PurchaseResult.Success;
+                case PurchaseStatus.Failed:
+                case PurchaseStatus.AlreadyOwned:
+                case PurchaseStatus.InvalidProduct:
+                    return Actions.PurchaseResult.Failed;
+                case PurchaseStatus.Pending:
+                    return Actions.PurchaseResult.Pending;
+                case PurchaseStatus.Cancelled:
+                    return Actions.PurchaseResult.Cancelled;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(status), status, null);
+            }
         }
 
         /// <summary>
@@ -834,7 +833,7 @@ namespace Balancy.Payments
             pendingPurchase.ErrorMessage = null;
             pendingPurchase.Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             pendingPurchase.CurrencyCode = product.metadata.isoCurrencyCode;
-            pendingPurchase.Price = product.metadata.localizedPrice;
+            pendingPurchase.Price = (float)product.metadata.localizedPrice;
             _pendingPurchaseManager.SavePendingPurchases();
             
             // For restore operations, add to the list of restored purchases
@@ -857,7 +856,7 @@ namespace Balancy.Payments
                     ProductId = product.definition.id,
                     Receipt = purchaseReceipt,
                     TransactionId = product.transactionID,
-                    Price = product.metadata.localizedPrice,
+                    Price = (float)product.metadata.localizedPrice,
                     CurrencyCode = product.metadata.isoCurrencyCode,
                 });
             }
@@ -899,35 +898,20 @@ namespace Balancy.Payments
                     status = PurchaseStatus.Failed;
                     break;
             }
-            _pendingPurchaseManager.RemovePendingPurchase(product.definition.id, product.transactionID);
-            // // Update pending purchase with failure status
-            // _pendingPurchaseManager.UpdatePendingPurchase(
-            //     product.definition.id,
-            //     product.transactionID,
-            //     null,
-            //     null,
-            //     PendingStatus.Failed,
-            //     failureReason.ToString());
-            
-            // Create purchase result
-            var result = new PurchaseResult
+
+            var pendingPurchase =
+                _pendingPurchaseManager.GetPendingPurchaseByProductId(product.definition.id,
+                    PendingStatus.WaitingForStore);
+            if (pendingPurchase != null)
             {
-                Status = status,
-                ProductId = product.definition.id,
-                ErrorMessage = failureReason.ToString()
-            };
-            //
-            // // If this is during a restore, add to the list of restored purchases
-            // if (_restorePurchasesCallback != null)
-            // {
-            //     _restoredPurchases.Add(result);
-            // }
-            //
-            // Notify callback
-            if (_pendingPurchaseCallbacks.TryGetValue(product.definition.id, out var callback))
-            {
-                _pendingPurchaseCallbacks.Remove(product.definition.id);
-                callback?.Invoke(result);
+                ReportPaymentStatusToBalancy(pendingPurchase.ProductInfo, new PurchaseResult
+                {
+                    Status = status,
+                    ProductId = product.definition.id,
+                    ErrorMessage = failureReason.ToString()
+                });
+
+                _pendingPurchaseManager.RemovePendingPurchase(pendingPurchase);
             }
         }
 
