@@ -16,7 +16,6 @@ namespace Balancy.Payments
     {
         WaitingForStore = 0,       // Purchase initiated, waiting for store response
         ProcessingValidation = 1,  // Store transaction completed, validating with server
-        ReadyToFinalize = 2,       // Purchase ready to be finalized after validation
         Failed = 3             // Purchase failed but kept for tracking
     }
 
@@ -219,17 +218,6 @@ namespace Balancy.Payments
         }
 
         /// <summary>
-        /// Get all purchases with a specific status
-        /// </summary>
-        public List<PendingPurchase> GetPendingPurchasesByStatus(PendingStatus status)
-        {
-            lock (_lock)
-            {
-                return _data.Purchases.FindAll(p => p.Status == status);
-            }
-        }
-
-        /// <summary>
         /// Remove a pending purchase
         /// </summary>
         public void RemovePendingPurchase(string productId, string transactionId)
@@ -250,18 +238,6 @@ namespace Balancy.Payments
             }
         }
         
-        /// <summary>
-        /// Clear all pending purchases
-        /// </summary>
-        public void ClearAllPendingPurchases()
-        {
-            lock (_lock)
-            {
-                _data.Purchases.Clear();
-                SavePendingPurchases();
-            }
-        }
-
         /// <summary>
         /// Clean up old pending purchases (older than specified days)
         /// </summary>

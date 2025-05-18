@@ -497,19 +497,12 @@ namespace Balancy.Payments
                 switch (purchase.Status)
                 {
                     case PendingStatus.WaitingForStore:
-                        
                         break;
                         
                     case PendingStatus.ProcessingValidation:
                         // Purchase was completed at store level but validation was interrupted
                         // We'll need to validate it again when store is initialized
                         ValidatePurchaseReceipt(purchase);
-                        break;
-                        
-                    case PendingStatus.ReadyToFinalize:
-                        // Purchase was completed and validated but not finalized
-                        // We'll need to grant the purchase and finalize it
-                        // NotifyPurchaseComplete(purchase);
                         break;
                         
                     case PendingStatus.Failed:

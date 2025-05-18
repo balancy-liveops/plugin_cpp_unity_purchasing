@@ -263,6 +263,11 @@ namespace Balancy.Payments
             });
         }
 
+        private void RestorePurchases()
+        {
+            RestorePurchases(null);
+        }
+
         /// <summary>
         /// Restore previously purchased products
         /// </summary>
@@ -370,6 +375,7 @@ namespace Balancy.Payments
             OnInitialized?.Invoke();
             
             Balancy.Actions.Purchasing.SetHardPurchaseCallback(TryToHardPurchase);
+            Balancy.Actions.Purchasing.SetRestorePurchasesCallback(RestorePurchases);
             
             Balancy.Callbacks.OnPaymentIsReady?.Invoke();
         }
