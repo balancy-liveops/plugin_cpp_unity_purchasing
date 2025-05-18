@@ -99,7 +99,10 @@ namespace Balancy.Payments
         public string ProductId { get; set; }
         public PurchaseReceipt Receipt { get; set; }
         public string ErrorMessage { get; set; }
-        public object RawPurchaseData { get; set; } // Store-specific purchase data
+        
+        public string TransactionId { get; set; }
+        public string CurrencyCode { get; set; }
+        public decimal Price { get; set; }
     }
 
     /// <summary>
@@ -132,7 +135,7 @@ namespace Balancy.Payments
         /// </summary>
         /// <param name="productId">Product identifier</param>
         /// <param name="callback">Callback with the purchase result</param>
-        void PurchaseProduct(string productId, Action<PurchaseResult> callback);
+        void PurchaseProduct(Balancy.Actions.BalancyProductInfo productInfo, Action<PurchaseResult> callback);
 
         /// <summary>
         /// Finish a transaction (needed on some platforms)
@@ -164,5 +167,7 @@ namespace Balancy.Payments
         /// </summary>
         /// <returns>True if the store is initialized</returns>
         bool IsInitialized();
+
+        void ProcessPendingPurchases();
     }
 }

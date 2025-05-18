@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using UnityEngine.Purchasing;
 
 namespace Balancy.Payments
 {
@@ -13,10 +14,10 @@ namespace Balancy.Payments
     [Serializable]
     public enum PendingStatus
     {
-        WaitingForStore,       // Purchase initiated, waiting for store response
-        ProcessingValidation,  // Store transaction completed, validating with server
-        ReadyToFinalize,       // Purchase ready to be finalized after validation
-        Failed                 // Purchase failed but kept for tracking
+        WaitingForStore = 0,       // Purchase initiated, waiting for store response
+        ProcessingValidation = 1,  // Store transaction completed, validating with server
+        ReadyToFinalize = 2,       // Purchase ready to be finalized after validation
+        Failed = 3             // Purchase failed but kept for tracking
     }
 
     /// <summary>
@@ -25,13 +26,22 @@ namespace Balancy.Payments
     [Serializable]
     public class PendingPurchase
     {
-        public string ProductId;
         public string TransactionId;
         public string Receipt;
         public string Store;
         public string ErrorMessage;
         public PendingStatus Status;
         public long Timestamp;
+
+        public Balancy.Actions.BalancyProductInfo ProductInfo;
+        
+        public bool Equals(Balancy.Actions.BalancyProductInfo productInfo)
+        {
+            return ProductInfo.ProductId == productInfo.ProductId && ProductInfo.BalancyId == productInfo.BalancyId && ProductInfo.BalancySecondaryId == productInfo.BalancySecondaryId;
+        }
+        
+        public string CurrencyCode { get; set; }
+        public decimal Price { get; set; }
 
         public PendingPurchase()
         {
@@ -76,23 +86,23 @@ namespace Balancy.Payments
         /// <summary>
         /// Add a new pending purchase
         /// </summary>
-        public PendingPurchase AddPendingPurchase(string productId)
+        public PendingPurchase AddPendingPurchase(Balancy.Actions.BalancyProductInfo productInfo)
         {
             lock (_lock)
             {
                 // Check if this product is already pending
-                var existing = _data.Purchases.Find(p => p.ProductId == productId && 
+                var existing = _data.Purchases.Find(p => p.Equals(productInfo) && 
                     (p.Status == PendingStatus.WaitingForStore || p.Status == PendingStatus.ProcessingValidation));
                 
                 if (existing != null)
                 {
-                    Debug.LogWarning($"Product {productId} already has a pending purchase. Returning existing.");
+                    Debug.LogWarning($"Product {productInfo.ProductId} already has a pending purchase. Returning existing.");
                     return existing;
                 }
 
                 var pendingPurchase = new PendingPurchase
                 {
-                    ProductId = productId,
+                    ProductInfo = productInfo,
                     Status = PendingStatus.WaitingForStore
                 };
 
@@ -114,11 +124,8 @@ namespace Balancy.Payments
                 
                 if (pendingPurchase == null)
                 {
-                    pendingPurchase = new PendingPurchase
-                    {
-                        ProductId = productId,
-                    };
-                    _data.Purchases.Add(pendingPurchase);
+                    Debug.LogError("something went wrong, no pending purchase found: " + productId);
+                    return;
                 }
 
                 pendingPurchase.TransactionId = transactionId;
@@ -126,6 +133,44 @@ namespace Balancy.Payments
                 pendingPurchase.Store = store;
                 pendingPurchase.Status = status;
                 pendingPurchase.ErrorMessage = errorMessage;
+                pendingPurchase.Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+                SavePendingPurchases();
+            }
+        }
+        
+        public void UpdatePendingPurchasePrice(string productId, string currencyCode, decimal localizedPrice)
+        {
+            lock (_lock)
+            {
+                var pendingPurchase = GetPendingPurchaseByProductId(productId);
+                
+                if (pendingPurchase == null)
+                {
+                    Debug.LogError(">something went wrong, no pending purchase found: " + productId);
+                    return;
+                }
+
+                pendingPurchase.CurrencyCode = currencyCode;
+                pendingPurchase.Price = localizedPrice;
+
+                SavePendingPurchases();
+            }
+        }
+        
+        public void UpdatePendingPurchaseStatus(string transactionId, PendingStatus status)
+        {
+            lock (_lock)
+            {
+                var pendingPurchase = GetPendingPurchaseByTransactionId(transactionId);
+                
+                if (pendingPurchase == null)
+                {
+                    Debug.LogError("something went wrong, no pending purchase found: " + transactionId);
+                    return;
+                }
+
+                pendingPurchase.Status = status;
                 pendingPurchase.Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
                 SavePendingPurchases();
@@ -139,7 +184,15 @@ namespace Balancy.Payments
         {
             lock (_lock)
             {
-                return _data.Purchases.Find(p => p.ProductId == productId);
+                return _data.Purchases.Find(p => p.ProductInfo.ProductId == productId);
+            }
+        }
+        
+        public PendingPurchase GetPendingPurchaseByProductId(string productId, PendingStatus status)
+        {
+            lock (_lock)
+            {
+                return _data.Purchases.Find(p => p.ProductInfo.ProductId == productId && p.Status == status);
             }
         }
 
@@ -183,7 +236,7 @@ namespace Balancy.Payments
         {
             lock (_lock)
             {
-                _data.Purchases.RemoveAll(p => p.ProductId == productId && p.TransactionId == transactionId);
+                _data.Purchases.RemoveAll(p => p.ProductInfo.ProductId == productId && p.TransactionId == transactionId);
                 SavePendingPurchases();
             }
         }
@@ -203,7 +256,7 @@ namespace Balancy.Payments
         /// <summary>
         /// Clean up old pending purchases (older than specified days)
         /// </summary>
-        public void CleanupOldPendingPurchases(int olderThanDays = 7)
+        public void CleanupOldPendingPurchases(int olderThanDays = 30)
         {
             lock (_lock)
             {
@@ -252,7 +305,7 @@ namespace Balancy.Payments
         /// <summary>
         /// Save pending purchases to disk
         /// </summary>
-        private void SavePendingPurchases()
+        public void SavePendingPurchases()
         {
             try
             {

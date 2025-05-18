@@ -128,7 +128,7 @@ namespace Balancy.Payments
                     AssignProductDefinition(productInfo);
                 
                 // Process any pending purchases from previous sessions
-                ProcessPendingPurchases();
+                // ProcessPendingPurchases();
                 
                 // Initialize Unity Purchasing
                 UnityPurchasing.Initialize(this, _builder);
@@ -259,20 +259,21 @@ namespace Balancy.Payments
         /// <summary>
         /// Purchase a product
         /// </summary>
-        public void PurchaseProduct(string productId, Action<PurchaseResult> callback)
+        public void PurchaseProduct(Balancy.Actions.BalancyProductInfo productInfo, Action<PurchaseResult> callback)
         {
             if (!IsInitialized())
             {
-                Initialize(() => PurchaseProduct(productId, callback), 
+                Initialize(() => PurchaseProduct(productInfo, callback), 
                     (error) => callback?.Invoke(new PurchaseResult
                     {
                         Status = PurchaseStatus.Failed,
-                        ProductId = productId,
+                        ProductId = productInfo.ProductId,
                         ErrorMessage = $"Store not initialized: {error}"
                     }));
                 return;
             }
 
+            var productId = productInfo.ProductId;
             if (_storeController == null)
             {
                 callback?.Invoke(new PurchaseResult
@@ -298,7 +299,7 @@ namespace Balancy.Payments
             }
 
             // Create a pending purchase record
-            var pendingPurchase = _pendingPurchaseManager.AddPendingPurchase(productId);
+            var pendingPurchase = _pendingPurchaseManager.AddPendingPurchase(productInfo);
             
             // Save the callback
             if (callback != null)
@@ -499,8 +500,9 @@ namespace Balancy.Payments
         /// <summary>
         /// Process any pending purchases from previous sessions
         /// </summary>
-        private void ProcessPendingPurchases()
+        public void ProcessPendingPurchases()
         {
+            Debug.LogWarning("...ProcessPendingPurchases");
             var pendingPurchases = _pendingPurchaseManager.GetAllPendingPurchases();
             
             foreach (var purchase in pendingPurchases)
@@ -508,15 +510,7 @@ namespace Balancy.Payments
                 switch (purchase.Status)
                 {
                     case PendingStatus.WaitingForStore:
-                        // Purchase was initiated but app crashed before store response
-                        // Mark as failed so user can try again
-                        _pendingPurchaseManager.UpdatePendingPurchase(
-                            purchase.ProductId, 
-                            purchase.TransactionId, 
-                            purchase.Receipt, 
-                            purchase.Store, 
-                            PendingStatus.Failed, 
-                            "Purchase interrupted by app closing");
+                        
                         break;
                         
                     case PendingStatus.ProcessingValidation:
@@ -528,7 +522,7 @@ namespace Balancy.Payments
                     case PendingStatus.ReadyToFinalize:
                         // Purchase was completed and validated but not finalized
                         // We'll need to grant the purchase and finalize it
-                        NotifyPurchaseComplete(purchase);
+                        // NotifyPurchaseComplete(purchase);
                         break;
                         
                     case PendingStatus.Failed:
@@ -539,59 +533,16 @@ namespace Balancy.Payments
         }
 
         /// <summary>
-        /// Validate a purchase receipt
+        /// Notify that a purchase is complete
         /// </summary>
         private void ValidatePurchaseReceipt(PendingPurchase purchase)
         {
-            // In a real app, you would validate this receipt with your server
-            // For this example, we'll just mark it as ready to finalize
-            
-            Debug.Log($"Validating purchase receipt for {purchase.ProductId}");
-            Debug.Log($"Receipt {purchase.Receipt}");
-            Debug.Log($"Status {purchase.Status}");
-            Debug.Log($"Store {purchase.Store}");
-            
-            // Simulate validation success
-            bool validationSuccess = true;
-            
-            if (validationSuccess)
-            {
-                _pendingPurchaseManager.UpdatePendingPurchase(
-                    purchase.ProductId,
-                    purchase.TransactionId,
-                    purchase.Receipt,
-                    purchase.Store,
-                    PendingStatus.ReadyToFinalize);
-                
-                // Notify about the successful purchase
-                NotifyPurchaseComplete(purchase);
-            }
-            else
-            {
-                _pendingPurchaseManager.UpdatePendingPurchase(
-                    purchase.ProductId,
-                    purchase.TransactionId,
-                    purchase.Receipt,
-                    purchase.Store,
-                    PendingStatus.Failed,
-                    "Receipt validation failed");
-                
-                // Notify about the failed purchase
-                NotifyPurchaseFailed(purchase, "Receipt validation failed");
-            }
-        }
-
-        /// <summary>
-        /// Notify that a purchase is complete
-        /// </summary>
-        private void NotifyPurchaseComplete(PendingPurchase purchase)
-        {
-            Debug.Log($"Purchase completed for {purchase.ProductId}");
+            Debug.Log($"Purchase completed for {purchase.ProductInfo.ProductId}");
             
             // Create receipt for callback
             var receipt = new PurchaseReceipt
             {
-                ProductId = purchase.ProductId,
+                ProductId = purchase.ProductInfo.ProductId,
                 TransactionId = purchase.TransactionId,
                 Receipt = purchase.Receipt,
                 Store = purchase.Store,
@@ -602,43 +553,59 @@ namespace Balancy.Payments
             var result = new PurchaseResult
             {
                 Status = PurchaseStatus.Success,
-                ProductId = purchase.ProductId,
-                Receipt = receipt
+                ProductId = purchase.ProductInfo.ProductId,
+                Receipt = receipt,
+                TransactionId = purchase.TransactionId,
+                Price = purchase.Price,
+                CurrencyCode = purchase.CurrencyCode
             };
 
             // If we have a callback registered for this product, invoke it
-            if (_pendingPurchaseCallbacks.TryGetValue(purchase.ProductId, out var callback))
+            if (_pendingPurchaseCallbacks.TryGetValue(purchase.ProductInfo.ProductId, out var callback))
             {
-                _pendingPurchaseCallbacks.Remove(purchase.ProductId);
+                _pendingPurchaseCallbacks.Remove(purchase.ProductInfo.ProductId);
                 callback?.Invoke(result);
             }
+            
+            var purchaseInfo = new Actions.PurchaseInfo
+            {
+                ProductId = productId,
+                Receipt = result.Receipt?.Receipt,
+                CurrencyCode = result.CurrencyCode,
+                Price = result.Price,
+                TransactionId = result.TransactionId,
+                ErrorMessage = result.ErrorMessage
+            };
+                
+            Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status), productInfo, purchaseInfo, (validationSuccess, removeFromPending) =>
+            {
+                Debug.Log("BEFORE PENDING COUNT: " +  _pendingPurchaseManager.GetAllPendingPurchases().Count);
+                if (validationSuccess)
+                {
+                    Debug.LogError("Success - remove pending");
+                    _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
+                    //TODO report to apple for claiming
+                }
+                else
+                {
+                    if (removeFromPending)
+                        _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
+                    else
+                    {
+                        Debug.LogError("Failed - leave in pending");
+                        //Do nothing
+                        // _pendingPurchaseManager.UpdatePendingPurchaseStatus(purchaseInfo.TransactionId,
+                        //     PendingStatus.ProcessingValidation);
+                    }
+                }
+                Debug.Log("AFTER PENDING COUNT: " +  _pendingPurchaseManager.GetAllPendingPurchases().Count);
+            });
 
             // If auto-finish is enabled, finalize the transaction
-            if (AutoFinishTransactions)
-            {
-                FinishTransaction(purchase.ProductId, purchase.TransactionId);
-            }
-        }
-
-        /// <summary>
-        /// Notify that a purchase failed
-        /// </summary>
-        private void NotifyPurchaseFailed(PendingPurchase purchase, string errorMessage)
-        {
-            Debug.Log($"Purchase failed for {purchase.ProductId}: {errorMessage}");
-            
-            var result = new PurchaseResult
-            {
-                Status = PurchaseStatus.Failed,
-                ProductId = purchase.ProductId,
-                ErrorMessage = errorMessage
-            };
-
-            if (_pendingPurchaseCallbacks.TryGetValue(purchase.ProductId, out var callback))
-            {
-                _pendingPurchaseCallbacks.Remove(purchase.ProductId);
-                callback?.Invoke(result);
-            }
+            // if (AutoFinishTransactions)
+            // {
+            //     FinishTransaction(purchase.ProductInfo.ProductId, purchase.TransactionId);
+            // }
         }
 
         /// <summary>
@@ -847,25 +814,28 @@ namespace Balancy.Payments
             Debug.Log($"Processing purchase: {product.definition.id}, Transaction: {product.transactionID}");
             
             // Check for pending purchase
-            var pendingPurchase = _pendingPurchaseManager.GetPendingPurchaseByProductId(product.definition.id);
+            var pendingPurchase = _pendingPurchaseManager.GetPendingPurchaseByProductId(product.definition.id, PendingStatus.WaitingForStore);
             
             // If this is not a pending purchase, it might be a restore or direct purchase
             if (pendingPurchase == null)
             {
-                pendingPurchase = _pendingPurchaseManager.AddPendingPurchase(product.definition.id);
+                Debug.LogError("failed to find Pending purchse");
+                //TODO this should be fixed
+                return PurchaseProcessingResult.Pending;
             }
             
-            // Get the receipt
             string receipt = product.receipt;
             string store = GetStoreFromReceipt(receipt);
             
-            // Update pending purchase with transaction details
-            _pendingPurchaseManager.UpdatePendingPurchase(
-                product.definition.id,
-                product.transactionID,
-                receipt,
-                store,
-                PendingStatus.ProcessingValidation);
+            pendingPurchase.TransactionId = product.transactionID;
+            pendingPurchase.Receipt = receipt;
+            pendingPurchase.Store = store;
+            pendingPurchase.Status = PendingStatus.ProcessingValidation;
+            pendingPurchase.ErrorMessage = null;
+            pendingPurchase.Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            pendingPurchase.CurrencyCode = product.metadata.isoCurrencyCode;
+            pendingPurchase.Price = product.metadata.localizedPrice;
+            _pendingPurchaseManager.SavePendingPurchases();
             
             // For restore operations, add to the list of restored purchases
             bool isRestoring = _restorePurchasesCallback != null;
@@ -885,11 +855,13 @@ namespace Balancy.Payments
                 {
                     Status = PurchaseStatus.Success,
                     ProductId = product.definition.id,
-                    Receipt = purchaseReceipt
+                    Receipt = purchaseReceipt,
+                    TransactionId = product.transactionID,
+                    Price = product.metadata.localizedPrice,
+                    CurrencyCode = product.metadata.isoCurrencyCode,
                 });
             }
             
-            // Validate the purchase receipt
             ValidatePurchaseReceipt(pendingPurchase);
             
             // If we want to control finishing the transaction ourselves, return Complete
@@ -927,31 +899,30 @@ namespace Balancy.Payments
                     status = PurchaseStatus.Failed;
                     break;
             }
-            
-            // Update pending purchase with failure status
-            _pendingPurchaseManager.UpdatePendingPurchase(
-                product.definition.id,
-                product.transactionID,
-                null,
-                null,
-                PendingStatus.Failed,
-                failureReason.ToString());
+            _pendingPurchaseManager.RemovePendingPurchase(product.definition.id, product.transactionID);
+            // // Update pending purchase with failure status
+            // _pendingPurchaseManager.UpdatePendingPurchase(
+            //     product.definition.id,
+            //     product.transactionID,
+            //     null,
+            //     null,
+            //     PendingStatus.Failed,
+            //     failureReason.ToString());
             
             // Create purchase result
             var result = new PurchaseResult
             {
                 Status = status,
                 ProductId = product.definition.id,
-                ErrorMessage = failureReason.ToString(),
-                RawPurchaseData = product
+                ErrorMessage = failureReason.ToString()
             };
-            
-            // If this is during a restore, add to the list of restored purchases
-            if (_restorePurchasesCallback != null)
-            {
-                _restoredPurchases.Add(result);
-            }
-            
+            //
+            // // If this is during a restore, add to the list of restored purchases
+            // if (_restorePurchasesCallback != null)
+            // {
+            //     _restoredPurchases.Add(result);
+            // }
+            //
             // Notify callback
             if (_pendingPurchaseCallbacks.TryGetValue(product.definition.id, out var callback))
             {

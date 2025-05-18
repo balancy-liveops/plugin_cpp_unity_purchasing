@@ -26,15 +26,10 @@ namespace Balancy.Payments
             {
                 if (_instance == null)
                 {
-                    _instance = FindAnyObjectByType<BalancyPaymentManager>();
-                    
-                    if (_instance == null)
-                    {
-                        GameObject go = new GameObject("BalancyPaymentManager");
-                        go.hideFlags = HideFlags.HideAndDontSave;
-                        _instance = go.AddComponent<BalancyPaymentManager>();
-                        DontDestroyOnLoad(go);
-                    }
+                    GameObject go = new GameObject("BalancyPaymentManager");
+                    go.hideFlags = HideFlags.HideAndDontSave;
+                    _instance = go.AddComponent<BalancyPaymentManager>();
+                    DontDestroyOnLoad(go);
                 }
                 
                 return _instance;
@@ -95,23 +90,21 @@ namespace Balancy.Payments
         [RuntimeInitializeOnLoadMethod]
         private static void Init()
         {
-            Debug.LogError("SUBS");
             Balancy.Controller.OnCloudSynced -= OnCloudSynced;
             Balancy.Controller.OnCloudSynced += OnCloudSynced;
         }
 
         private static void OnCloudSynced()
         {
-            Debug.LogError("INIT");
             Instance.Initialize();
         }
 
         private void OnApplicationPause(bool pauseStatus)
         {
             // When resuming, check for pending purchases
-            if (!pauseStatus && _isInitialized)
+            if (!pauseStatus && _isInitialized && _paymentSystem != null)
             {
-                ProcessPendingPurchases();
+                _paymentSystem.ProcessPendingPurchases();
             }
         }
 
@@ -143,38 +136,12 @@ namespace Balancy.Payments
             {
                 _onInitializeFailed += onInitializeFailed;
             }
-            
-            // Use provided config or fallback to serialized one
-            // BalancyPaymentConfig configToUse = paymentConfig ?? config;
-            //
-            // if (configToUse == null)
-            // {
-            //     LogError("No payment configuration provided");
-            //     _onInitializeFailed?.Invoke("No payment configuration provided");
-            //     _onInitialized = null;
-            //     _onInitializeFailed = null;
-            //     return;
-            // }
-            
-            // Create payment system
+
             _paymentSystem = CreatePaymentSystem();
             
-            // Apply configuration
-            // configToUse.ApplyConfiguration(_paymentSystem);
-
             if (_paymentSystem is UnityPurchaseSystem unitySystem)
                 ApplyConfig(unitySystem);
-            
-            // Create receipt validator if needed
-            // if (configToUse.ValidateReceipts && !string.IsNullOrEmpty(configToUse.ValidationServiceUrl))
-            // {
-            //     _receiptValidator = new ReceiptValidator(
-            //         configToUse.ValidationServiceUrl,
-            //         configToUse.ValidationSecret,
-            //         this);
-            // }
-            
-            // Initialize the payment system
+
             _paymentSystem.Initialize(OnPaymentSystemInitialized, OnPaymentSystemInitializeFailed);
         }
 
@@ -264,10 +231,11 @@ namespace Balancy.Payments
         /// </summary>
         /// <param name="productId">Product ID</param>
         /// <param name="callback">Callback with purchase result</param>
-        public void PurchaseProduct(string productId, Action<PurchaseResult> callback)
+        private void PurchaseProduct(Balancy.Actions.BalancyProductInfo productInfo, Action<PurchaseResult> callback)
         {
             EnsureInitialized(() =>
             {
+                var productId = productInfo.ProductId;
                 Log($"Initiating purchase for product: {productId}");
                 
                 // Check for existing pending purchase
@@ -292,121 +260,21 @@ namespace Balancy.Payments
                 _purchaseCallbacks[productId] = callback;
                 
                 // Initiate purchase
-                _paymentSystem.PurchaseProduct(productId, result =>
+                _paymentSystem.PurchaseProduct(productInfo, result =>
                 {
                     Log($"Purchase result for {productId}: {result.Status}");
                     
-                    if (result.Status == PurchaseStatus.Success)
-                    {
-                        // Validate receipt if validator is available
-                        if (_receiptValidator != null)
-                        {
-                            ValidateReceipt(result.Receipt, validatedResult =>
-                            {
-                                if (validatedResult.IsValid)
-                                {
-                                    // Update pending purchase status
-                                    _pendingPurchaseManager.UpdatePendingPurchase(
-                                        productId,
-                                        result.Receipt.TransactionId,
-                                        result.Receipt.Receipt,
-                                        result.Receipt.Store,
-                                        PendingStatus.ReadyToFinalize);
-                                    
-                                    // Create success result
-                                    var successResult = new PurchaseResult
-                                    {
-                                        Status = PurchaseStatus.Success,
-                                        ProductId = productId,
-                                        Receipt = result.Receipt
-                                    };
-                                    
-                                    // Complete purchase
-                                    OnPurchaseComplete(productId, successResult);
-                                }
-                                else
-                                {
-                                    // Mark as failed
-                                    _pendingPurchaseManager.UpdatePendingPurchase(
-                                        productId,
-                                        result.Receipt.TransactionId,
-                                        result.Receipt.Receipt,
-                                        result.Receipt.Store,
-                                        PendingStatus.Failed,
-                                        validatedResult.ErrorMessage);
-                                    
-                                    // Create failure result
-                                    var failResult = new PurchaseResult
-                                    {
-                                        Status = PurchaseStatus.Failed,
-                                        ProductId = productId,
-                                        ErrorMessage = validatedResult.ErrorMessage
-                                    };
-                                    
-                                    // Complete purchase with failure
-                                    OnPurchaseComplete(productId, failResult);
-                                }
-                            });
-                        }
-                        else
-                        {
-                            // No validation needed, mark as ready to finalize
-                            _pendingPurchaseManager.UpdatePendingPurchase(
-                                productId,
-                                result.Receipt.TransactionId,
-                                result.Receipt.Receipt,
-                                result.Receipt.Store,
-                                PendingStatus.ReadyToFinalize);
-                            
-                            // Complete purchase
-                            OnPurchaseComplete(productId, result);
-                        }
-                    }
-                    else
-                    {
-                        // Update pending purchase status
-                        if (pendingPurchase != null)
-                        {
-                            _pendingPurchaseManager.UpdatePendingPurchase(
-                                productId,
-                                result.Receipt?.TransactionId,
-                                result.Receipt?.Receipt,
-                                result.Receipt?.Store,
-                                PendingStatus.Failed,
-                                result.ErrorMessage);
-                        }
-                        
-                        // Invoke callback
-                        OnPurchaseComplete(productId, result);
-                    }
+                    OnPurchaseComplete(productId, result);
                 });
             }, error =>
             {
                 callback?.Invoke(new PurchaseResult
                 {
                     Status = PurchaseStatus.Failed,
-                    ProductId = productId,
+                    ProductId = productInfo.ProductId,
                     ErrorMessage = $"Payment system not initialized: {error}"
                 });
             });
-        }
-
-        /// <summary>
-        /// Finalize a transaction
-        /// </summary>
-        /// <param name="productId">Product ID</param>
-        /// <param name="transactionId">Transaction ID</param>
-        public void FinishTransaction(string productId, string transactionId)
-        {
-            if (!_isInitialized)
-            {
-                LogWarning("Cannot finish transaction: payment system not initialized");
-                return;
-            }
-            
-            Log($"Finishing transaction for product: {productId}, transaction: {transactionId}");
-            _paymentSystem.FinishTransaction(productId, transactionId);
-            _pendingPurchaseManager.RemovePendingPurchase(productId, transactionId);
         }
 
         /// <summary>
@@ -537,14 +405,86 @@ namespace Balancy.Payments
             _isInitialized = true;
             
             // Process any pending purchases
-            ProcessPendingPurchases();
-            
-            // Invoke callbacks
             var callback = _onInitialized;
             _onInitialized = null;
             _onInitializeFailed = null;
             callback?.Invoke();
             OnInitialized?.Invoke();
+            
+            Balancy.Actions.Purchasing.SetHardPurchaseCallback(TryToHardPurchase);
+            
+            Balancy.Callbacks.OnPaymentIsReady?.Invoke();
+        }
+
+        private void TryToHardPurchase(Balancy.Actions.BalancyProductInfo productInfo)
+        {
+            var productId = productInfo?.ProductId;
+            
+            if (string.IsNullOrEmpty(productId))
+            {
+                Debug.LogError("Product ID is null or empty");
+                Balancy.API.FinalizedHardPurchase(Actions.PurchaseResult.Failed, productInfo, new Actions.PurchaseInfo
+                {
+                    ErrorMessage = "Product ID is null or empty"
+                }, null);
+                return;
+            }
+            
+            PurchaseProduct(productInfo, result =>
+            {
+                var purchaseInfo = new Actions.PurchaseInfo
+                {
+                    ProductId = productId,
+                    Receipt = result.Receipt?.Receipt,
+                    CurrencyCode = result.CurrencyCode,
+                    Price = result.Price,
+                    TransactionId = result.TransactionId,
+                    ErrorMessage = result.ErrorMessage
+                };
+                
+                Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status), productInfo, purchaseInfo, (validationSuccess, removeFromPending) =>
+                {
+                    Debug.Log("BEFORE PENDING COUNT: " +  _pendingPurchaseManager.GetAllPendingPurchases().Count);
+                    if (validationSuccess)
+                    {
+                        Debug.LogError("Success - remove pending");
+                        _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
+                        //TODO report to apple for claiming
+                    }
+                    else
+                    {
+                        if (removeFromPending)
+                            _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
+                        else
+                        {
+                            Debug.LogError("Failed - leave in pending");
+                            //Do nothing
+                            // _pendingPurchaseManager.UpdatePendingPurchaseStatus(purchaseInfo.TransactionId,
+                            //     PendingStatus.ProcessingValidation);
+                        }
+                    }
+                    Debug.Log("AFTER PENDING COUNT: " +  _pendingPurchaseManager.GetAllPendingPurchases().Count);
+                });
+            });
+        }
+
+        private static Actions.PurchaseResult ConvertStatusToResult(PurchaseStatus status)
+        {
+            switch (status)
+            {
+                case PurchaseStatus.Success:
+                    return Actions.PurchaseResult.Success;
+                case PurchaseStatus.Failed:
+                case PurchaseStatus.AlreadyOwned:
+                case PurchaseStatus.InvalidProduct:
+                    return Actions.PurchaseResult.Failed;
+                case PurchaseStatus.Pending:
+                    return Actions.PurchaseResult.Pending;
+                case PurchaseStatus.Cancelled:
+                    return Actions.PurchaseResult.Cancelled;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(status), status, null);
+            }
         }
 
         /// <summary>
@@ -562,146 +502,7 @@ namespace Balancy.Payments
             _onInitializeFailed = null;
             callback?.Invoke(error);
         }
-
-        /// <summary>
-        /// Process any pending purchases from previous sessions
-        /// </summary>
-        private void ProcessPendingPurchases()
-        {
-            Log("Processing pending purchases...");
-            
-            var pendingPurchases = _pendingPurchaseManager.GetAllPendingPurchases();
-            foreach (var purchase in pendingPurchases)
-            {
-                if (purchase.Status == PendingStatus.ReadyToFinalize)
-                {
-                    // This purchase was validated but not finalized
-                    Log($"Found purchase ready to finalize: {purchase.ProductId}");
-                    
-                    // Create a purchase result for the callback
-                    var result = new PurchaseResult
-                    {
-                        Status = PurchaseStatus.Success,
-                        ProductId = purchase.ProductId,
-                        Receipt = new PurchaseReceipt
-                        {
-                            ProductId = purchase.ProductId,
-                            TransactionId = purchase.TransactionId,
-                            Receipt = purchase.Receipt,
-                            Store = purchase.Store,
-                            PurchaseTime = DateTimeOffset.FromUnixTimeSeconds(purchase.Timestamp).DateTime
-                        }
-                    };
-                    
-                    // Finalize the purchase
-                    FinishTransaction(purchase.ProductId, purchase.TransactionId);
-                    
-                    // Notify listeners
-                    OnPurchaseComplete(purchase.ProductId, result);
-                }
-                else if (purchase.Status == PendingStatus.ProcessingValidation)
-                {
-                    // This purchase was not validated
-                    Log($"Found purchase needing validation: {purchase.ProductId}");
-                    
-                    if (_receiptValidator != null)
-                    {
-                        // Create a receipt for validation
-                        var receipt = new PurchaseReceipt
-                        {
-                            ProductId = purchase.ProductId,
-                            TransactionId = purchase.TransactionId,
-                            Receipt = purchase.Receipt,
-                            Store = purchase.Store,
-                            PurchaseTime = DateTimeOffset.FromUnixTimeSeconds(purchase.Timestamp).DateTime
-                        };
-                        
-                        // Validate the receipt
-                        ValidateReceipt(receipt, result =>
-                        {
-                            if (result.IsValid)
-                            {
-                                // Update status
-                                _pendingPurchaseManager.UpdatePendingPurchase(
-                                    purchase.ProductId,
-                                    purchase.TransactionId,
-                                    purchase.Receipt,
-                                    purchase.Store,
-                                    PendingStatus.ReadyToFinalize);
-                                
-                                // Create success result
-                                var successResult = new PurchaseResult
-                                {
-                                    Status = PurchaseStatus.Success,
-                                    ProductId = purchase.ProductId,
-                                    Receipt = receipt
-                                };
-                                
-                                // Finalize the purchase
-                                FinishTransaction(purchase.ProductId, purchase.TransactionId);
-                                
-                                // Notify listeners
-                                OnPurchaseComplete(purchase.ProductId, successResult);
-                            }
-                            else
-                            {
-                                // Mark as failed
-                                _pendingPurchaseManager.UpdatePendingPurchase(
-                                    purchase.ProductId,
-                                    purchase.TransactionId,
-                                    purchase.Receipt,
-                                    purchase.Store,
-                                    PendingStatus.Failed,
-                                    result.ErrorMessage);
-                                
-                                // Create failure result
-                                var failResult = new PurchaseResult
-                                {
-                                    Status = PurchaseStatus.Failed,
-                                    ProductId = purchase.ProductId,
-                                    ErrorMessage = result.ErrorMessage
-                                };
-                                
-                                // Notify listeners
-                                OnPurchaseComplete(purchase.ProductId, failResult);
-                            }
-                        });
-                    }
-                    else
-                    {
-                        // No validator, just assume it's valid
-                        _pendingPurchaseManager.UpdatePendingPurchase(
-                            purchase.ProductId,
-                            purchase.TransactionId,
-                            purchase.Receipt,
-                            purchase.Store,
-                            PendingStatus.ReadyToFinalize);
-                        
-                        // Create success result
-                        var successResult = new PurchaseResult
-                        {
-                            Status = PurchaseStatus.Success,
-                            ProductId = purchase.ProductId,
-                            Receipt = new PurchaseReceipt
-                            {
-                                ProductId = purchase.ProductId,
-                                TransactionId = purchase.TransactionId,
-                                Receipt = purchase.Receipt,
-                                Store = purchase.Store,
-                                PurchaseTime = DateTimeOffset.FromUnixTimeSeconds(purchase.Timestamp).DateTime
-                            }
-                        };
-                        
-                        // Finalize
-                        FinishTransaction(purchase.ProductId, purchase.TransactionId);
-                        
-                        // Notify listeners
-                        OnPurchaseComplete(purchase.ProductId, successResult);
-                    }
-                }
-            }
-        }
-
+        
         /// <summary>
         /// Validate a receipt with the server
         /// </summary>
