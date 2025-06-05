@@ -1,3 +1,4 @@
+#if !NO_UNITY_PURCHASING
 // BalancyPaymentManager.cs
 
 using System;
@@ -386,10 +387,7 @@ namespace Balancy.Payments
             
             if (string.IsNullOrEmpty(productId))
             {
-                Balancy.API.FinalizedHardPurchase(Actions.PurchaseResult.Failed, productInfo, new Actions.PurchaseInfo
-                {
-                    ErrorMessage = "Product ID is null or empty"
-                }, null);
+                Balancy.API.FinalizedHardPurchase(Actions.PurchaseResult.Failed, productInfo, null, null);
                 return;
             }
 
@@ -461,3 +459,4 @@ namespace Balancy.Payments
         #endregion
     }
 }
+#endif

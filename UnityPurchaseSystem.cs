@@ -1,8 +1,10 @@
+#if !NO_UNITY_PURCHASING
 // UnityPurchaseSystem.cs
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Balancy.Core;
 using UnityEngine;
 using UnityEngine.Purchasing;
 using UnityEngine.Purchasing.Extension;
@@ -545,17 +547,16 @@ namespace Balancy.Payments
 
         public void ReportPaymentStatusToBalancy(Actions.BalancyProductInfo productInfo, PurchaseResult result)
         {
-            var purchaseInfo = new Actions.PurchaseInfo
+            var paymentInfo = new PaymentInfo
             {
                 ProductId = productInfo?.ProductId,
                 Receipt = result.Receipt?.Receipt,
-                CurrencyCode = result.CurrencyCode,
+                Currency = result.CurrencyCode,
                 Price = result.Price,
-                TransactionId = result.TransactionId,
-                ErrorMessage = result.ErrorMessage
+                OrderId = result.TransactionId
             };
                 
-            Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status), productInfo, purchaseInfo, (validationSuccess, removeFromPending) =>
+            Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status), productInfo, paymentInfo, (validationSuccess, removeFromPending) =>
             {
                 if (validationSuccess)
                 {
@@ -566,13 +567,13 @@ namespace Balancy.Payments
                         _storeController.ConfirmPendingPurchase(product);
                     }
                     
-                    _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
+                    _pendingPurchaseManager.RemovePendingPurchase(paymentInfo.ProductId, paymentInfo.OrderId);
                     //TODO report to apple for claiming
                 }
                 else
                 {
                     if (removeFromPending)
-                        _pendingPurchaseManager.RemovePendingPurchase(purchaseInfo.ProductId, purchaseInfo.TransactionId);
+                        _pendingPurchaseManager.RemovePendingPurchase(paymentInfo.ProductId, paymentInfo.OrderId);
                     else
                     {
                         //Do nothing
@@ -966,3 +967,4 @@ namespace Balancy.Payments
         #endregion
     }
 }
+#endif
