@@ -310,6 +310,12 @@ namespace Balancy.Payments
                         // }
                     }
                     
+                    // Fire the event for external listeners
+                    OnPurchasesRestored?.Invoke(results);
+                    
+                    // Call the provided callback
+                    callback?.Invoke(results);
+                    
                     // Validate each restored purchase if validator is available
                    
                 });

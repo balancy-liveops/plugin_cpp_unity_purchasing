@@ -7,24 +7,20 @@ using System.Linq;
 using Balancy.Core;
 using UnityEngine;
 using UnityEngine.Purchasing;
-using UnityEngine.Purchasing.Extension;
 using Unity.Services.Core;
 using Unity.Services.Core.Environments;
+using System.Threading.Tasks;
 
 namespace Balancy.Payments
 {
     /// <summary>
-    /// Implementation of the Balancy payment system using Unity IAP 4.12.2
+    /// Implementation of the Balancy payment system using Unity IAP v5
     /// </summary>
-    public class UnityPurchaseSystem : IBalancyPaymentSystem, IDetailedStoreListener
+    public class UnityPurchaseSystem : IBalancyPaymentSystem
     {
         #region Private Fields
 
-        private IStoreController _storeController;
-        private IExtensionProvider _extensionProvider;
-        private IAppleExtensions _appleExtensions;
-        private IGooglePlayStoreExtensions _googlePlayExtensions;
-        private IAmazonExtensions _amazonExtensions;
+        private StoreController _storeController;
         
         private bool _isInitializing;
         private bool _isInitialized;
@@ -36,7 +32,6 @@ namespace Balancy.Payments
         private List<PurchaseResult> _restoredPurchases = new List<PurchaseResult>();
         
         private static UnityPurchaseSystem _instance;
-        private ConfigurationBuilder _builder;
 
         class ProductPublicInfo
         {
@@ -76,9 +71,6 @@ namespace Balancy.Payments
         /// </summary>
         public string UnityEnvironment { get; set; } = "production";
         
-        /// <summary>
-        /// Whether to use the UDP (Unity Distribution Portal) store
-        /// </summary>
         #endregion
 
         #region Public Methods
@@ -116,18 +108,8 @@ namespace Balancy.Payments
                 
                 await UnityServices.InitializeAsync(options);
                 
-                // Create a builder for IAP
-                var module = GetPurchasingModule();
-                _builder = ConfigurationBuilder.Instance(module);
-
-                foreach (var productInfo in _products)
-                    AssignProductDefinition(productInfo);
-                
-                // Process any pending purchases from previous sessions
-                // ProcessPendingPurchases();
-                
-                // Initialize Unity Purchasing
-                UnityPurchasing.Initialize(this, _builder);
+                // Initialize IAP v5
+                await InitializeIAPv5();
             }
             catch (Exception ex)
             {
@@ -152,59 +134,83 @@ namespace Balancy.Payments
             });
         }
         
-        private void AssignProductDefinition(ProductPublicInfo productInfo)
+        /// <summary>
+        /// Initialize IAP v5 with new async flow
+        /// </summary>
+        private async Task InitializeIAPv5()
         {
-            string productId = productInfo.ProductId;
-            ProductType type = productInfo.Type;
-            string storeSpecificId = productInfo.StoreSpecificId;
-            
-            if (_isInitialized)
+            try
             {
-                Debug.LogWarning("Cannot add products after initialization. Please add products before calling Initialize().");
-                return;
-            }
-
-            if (string.IsNullOrEmpty(storeSpecificId))
-            {
-                storeSpecificId = productId;
-            }
-
-            ProductDefinition def;
-            IDs ids = null;
-            
-            if (productId != storeSpecificId)
-            {
-                ids = new IDs();
-                ids.Add(storeSpecificId, GetAppStore());
-            }
-
-            UnityEngine.Purchasing.ProductType unityType;
-            switch (type)
-            {
-                case ProductType.Consumable:
-                    unityType = UnityEngine.Purchasing.ProductType.Consumable;
-                    break;
-                case ProductType.NonConsumable:
-                    unityType = UnityEngine.Purchasing.ProductType.NonConsumable;
-                    break;
-                case ProductType.Subscription:
-                    unityType = UnityEngine.Purchasing.ProductType.Subscription;
-                    break;
-                default:
-                    unityType = UnityEngine.Purchasing.ProductType.Consumable;
-                    break;
-            }
-
-            def = new ProductDefinition(productId, storeSpecificId, unityType);
-            _productDefinitions[productId] = def;
-            
-            if (_builder != null)
-            {
-                if (ids != null)
-                    _builder.AddProduct(productId, unityType, ids);
+                // Get the store controller
+                _storeController = UnityIAPServices.StoreController();
+                
+                // Set up event handlers
+                _storeController.OnPurchasePending += OnPurchasePending;
+                _storeController.OnPurchaseConfirmed += OnPurchaseConfirmed;
+                _storeController.OnPurchaseFailed += OnPurchaseFailed;
+                _storeController.OnProductsFetched += OnProductsFetched;
+                _storeController.OnPurchasesFetched += OnPurchasesFetched;
+                
+                // Connect to the store
+                await _storeController.Connect();
+                
+                // Fetch products if we have any
+                if (_products.Count > 0)
+                {
+                    var productDefinitions = CreateProductDefinitions();
+                    _storeController.FetchProducts(productDefinitions);
+                }
                 else
-                    _builder.AddProduct(productId, unityType);
+                {
+                    // No products to fetch, consider initialization complete
+                    OnInitializationComplete();
+                }
             }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to initialize IAP v5: {ex.Message}");
+                _isInitializing = false;
+                _onInitializeFailed?.Invoke(ex.Message);
+                _onInitializeFailed = null;
+                _onInitialized = null;
+            }
+        }
+        
+        /// <summary>
+        /// Create product definitions for v5
+        /// </summary>
+        private List<ProductDefinition> CreateProductDefinitions()
+        {
+            var productDefinitions = new List<ProductDefinition>();
+            
+            foreach (var productInfo in _products)
+            {
+                string productId = productInfo.ProductId;
+                string storeSpecificId = productInfo.StoreSpecificId ?? productId;
+                
+                UnityEngine.Purchasing.ProductType unityType;
+                switch (productInfo.Type)
+                {
+                    case ProductType.Consumable:
+                        unityType = UnityEngine.Purchasing.ProductType.Consumable;
+                        break;
+                    case ProductType.NonConsumable:
+                        unityType = UnityEngine.Purchasing.ProductType.NonConsumable;
+                        break;
+                    case ProductType.Subscription:
+                        unityType = UnityEngine.Purchasing.ProductType.Subscription;
+                        break;
+                    default:
+                        unityType = UnityEngine.Purchasing.ProductType.Consumable;
+                        break;
+                }
+
+                var def = new ProductDefinition(productId, storeSpecificId, unityType);
+                _productDefinitions[productId] = def;
+                productDefinitions.Add(def);
+            }
+            
+            return productDefinitions;
         }
 
         /// <summary>
@@ -285,7 +291,7 @@ namespace Balancy.Payments
             }
 
             // Check if the product exists
-            var product = _storeController.products.WithID(productId);
+            var product = _storeController.GetProductById(productId);
             if (product == null || !product.availableToPurchase)
             {
                 ReportPaymentStatusToBalancy(productInfo, new PurchaseResult
@@ -302,8 +308,8 @@ namespace Balancy.Payments
             
             try
             {
-                // Start the purchase flow
-                _storeController.InitiatePurchase(product);
+                // Start the purchase flow using v5 API
+                _storeController.PurchaseProduct(productId);
             }
             catch (Exception ex)
             {
@@ -364,25 +370,12 @@ namespace Balancy.Payments
 
             try
             {
-                if (Application.platform == RuntimePlatform.IPhonePlayer || 
-                    Application.platform == RuntimePlatform.OSXPlayer)
-                {
-                    // iOS and Mac App Store
-                    Debug.Log("Restoring purchases for Apple platform");
-                    _appleExtensions.RestoreTransactions(OnAppleRestoreTransactionsComplete);
-                }
-                else if (Application.platform == RuntimePlatform.Android)
-                {
-                    // Google Play
-                    Debug.Log("Restoring purchases for Android platform");
-                    _googlePlayExtensions.RestoreTransactions(OnGooglePlayRestoreTransactionsComplete);
-                }
-                else
-                {
-                    // Other platforms don't typically need this
-                    Debug.Log("Restore purchases not supported on this platform. Treating as successful.");
-                    OnRestoreTransactionsComplete(true);
-                }
+                // Use IAP v5 RestoreTransactions method
+                Debug.Log($"Restoring purchases for {Application.platform} platform");
+                _storeController.RestoreTransactions((success, error) => {
+                    Debug.Log($"Restore completed. Success: {success}, Error: {error}");
+                    OnRestoreTransactionsComplete(success);
+                });
             }
             catch (Exception ex)
             {
@@ -407,51 +400,27 @@ namespace Balancy.Payments
 
             try
             {
-                foreach (var product in _storeController.products.all)
+                // Note: In IAP v5, we need to access products differently
+                // For now, provide basic subscription info - can be enhanced with v5 subscription APIs
+                foreach (var productDef in _productDefinitions.Values)
                 {
-                    if (product.definition.type == UnityEngine.Purchasing.ProductType.Subscription && 
-                        product.hasReceipt)
+                    if (productDef.type == UnityEngine.Purchasing.ProductType.Subscription)
                     {
-                        string introJson = null;
-
-                        // Get introductory pricing info for the platform
-                        if (Application.platform == RuntimePlatform.IPhonePlayer)
-                        {
-                            var introductoryPrices = _appleExtensions.GetIntroductoryPriceDictionary();
-                            if (introductoryPrices != null && 
-                                introductoryPrices.TryGetValue(product.definition.storeSpecificId, out var json))
-                            {
-                                introJson = json;
-                            }
-                        }
-                        else if (Application.platform == RuntimePlatform.Android)
-                        {
-                            var metadata = product.metadata.GetGoogleProductMetadata();
-                            if (metadata != null)
-                            {
-                                introJson = metadata.originalJson;
-                            }
-                        }
-
-                        // Create Unity's subscription manager
-                        var unitySubscriptionManager = new SubscriptionManager(product, introJson);
-                        var unitySubscriptionInfo = unitySubscriptionManager.getSubscriptionInfo();
-
-                        // Convert to our SubscriptionInfo model
+                        // Create basic subscription info
                         var subInfo = new SubscriptionInfo
                         {
-                            ProductId = unitySubscriptionInfo.getProductId(),
-                            PurchaseDate = unitySubscriptionInfo.getPurchaseDate(),
-                            ExpireDate = unitySubscriptionInfo.getExpireDate(),
-                            IsSubscribed = unitySubscriptionInfo.isSubscribed() == Result.True,
-                            IsExpired = unitySubscriptionInfo.isExpired() == Result.True,
-                            IsCancelled = unitySubscriptionInfo.isCancelled() == Result.True,
-                            IsFreeTrial = unitySubscriptionInfo.isFreeTrial() == Result.True,
-                            IsAutoRenewing = unitySubscriptionInfo.isAutoRenewing() == Result.True,
-                            RemainingTime = unitySubscriptionInfo.getRemainingTime(),
-                            IntroductoryPrice = unitySubscriptionInfo.getIntroductoryPrice(),
-                            IntroductoryPricePeriod = unitySubscriptionInfo.getIntroductoryPricePeriod(),
-                            IntroductoryPriceCycles = unitySubscriptionInfo.getIntroductoryPricePeriodCycles()
+                            ProductId = productDef.id,
+                            PurchaseDate = DateTime.Now, // Should be retrieved from actual purchase data
+                            ExpireDate = DateTime.Now.AddMonths(1), // Should be calculated from actual subscription
+                            IsSubscribed = false, // Should be determined from actual purchase status
+                            IsExpired = false,
+                            IsCancelled = false,
+                            IsFreeTrial = false,
+                            IsAutoRenewing = true,
+                            RemainingTime = TimeSpan.FromDays(30),
+                            IntroductoryPrice = "",
+                            IntroductoryPricePeriod = TimeSpan.Zero,
+                            IntroductoryPriceCycles = 0
                         };
 
                         subscriptionInfos.Add(subInfo);
@@ -471,7 +440,7 @@ namespace Balancy.Payments
         /// </summary>
         public bool IsPurchasingSupported()
         {
-            return _storeController != null && _extensionProvider != null;
+            return _storeController != null;
         }
 
         /// <summary>
@@ -479,7 +448,7 @@ namespace Balancy.Payments
         /// </summary>
         public bool IsInitialized()
         {
-            return _isInitialized && _storeController != null && _extensionProvider != null;
+            return _isInitialized && _storeController != null;
         }
 
         #endregion
@@ -555,17 +524,19 @@ namespace Balancy.Payments
                 Price = result.Price,
                 OrderId = result.TransactionId
             };
+            
+#if UNITY_EDITOR
+            bool requireValidation = false;
+#else
+            bool requireValidation = true;
+#endif
                 
             Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status), productInfo, paymentInfo, (validationSuccess, removeFromPending) =>
             {
                 if (validationSuccess)
                 {
-                    var product = _storeController.products.WithID(productInfo?.ProductId);
-                    if (product != null)
-                    {
-                        Debug.LogError("Confirm pending purchase");
-                        _storeController.ConfirmPendingPurchase(product);
-                    }
+                    // In v5, purchase confirmation is handled by the OnPurchaseConfirmed event
+                    Debug.Log("Purchase validation successful");
                     
                     _pendingPurchaseManager.RemovePendingPurchase(paymentInfo.ProductId, paymentInfo.OrderId);
                     //TODO report to apple for claiming
@@ -581,7 +552,7 @@ namespace Balancy.Payments
                         //     PendingStatus.ProcessingValidation);
                     }
                 }
-            });
+            }, requireValidation);
         }
         
         private static Actions.PurchaseResult ConvertStatusToResult(PurchaseStatus status)
@@ -604,75 +575,19 @@ namespace Balancy.Payments
         }
 
         /// <summary>
-        /// Refresh the list of products
+        /// Refresh the list of products (will be populated by OnProductsFetched event)
         /// </summary>
         private void RefreshProductList()
         {
             _cachedProducts.Clear();
             
-            if (_storeController == null || _storeController.products == null)
+            if (_storeController == null)
             {
                 return;
             }
 
-            foreach (var unityProduct in _storeController.products.all)
-            {
-                // Create product metadata
-                var metadata = new ProductMetadata
-                {
-                    LocalizedTitle = unityProduct.metadata.localizedTitle,
-                    LocalizedDescription = unityProduct.metadata.localizedDescription,
-                    LocalizedPriceString = unityProduct.metadata.localizedPriceString,
-                    LocalizedPrice = unityProduct.metadata.localizedPrice,
-                    IsoCurrencyCode = unityProduct.metadata.isoCurrencyCode
-                };
-
-                // Determine product type
-                ProductType productType;
-                switch (unityProduct.definition.type)
-                {
-                    case UnityEngine.Purchasing.ProductType.Consumable:
-                        productType = ProductType.Consumable;
-                        break;
-                    case UnityEngine.Purchasing.ProductType.NonConsumable:
-                        productType = ProductType.NonConsumable;
-                        break;
-                    case UnityEngine.Purchasing.ProductType.Subscription:
-                        productType = ProductType.Subscription;
-                        break;
-                    default:
-                        productType = ProductType.Consumable;
-                        break;
-                }
-
-                // Create our product info
-                var productInfo = new ProductInfo
-                {
-                    ProductId = unityProduct.definition.id,
-                    StoreSpecificId = unityProduct.definition.storeSpecificId,
-                    Type = productType,
-                    Metadata = metadata,
-                    IsAvailable = unityProduct.availableToPurchase,
-                    RawProductData = unityProduct
-                };
-
-                _cachedProducts.Add(productInfo);
-            }
-        }
-
-        /// <summary>
-        /// Get the appropriate purchasing module based on platform and settings
-        /// </summary>
-        private IPurchasingModule GetPurchasingModule()
-        {
-            var module = StandardPurchasingModule.Instance();
-            
-#if UNITY_EDITOR
-            // Configure the module based on platform-specific needs
-            module.useFakeStoreUIMode = FakeStoreUIMode.StandardUser;
-            module.useFakeStoreAlways = true;
-#endif
-            return module;
+            // In v5, products are accessed through events
+            // This method will be called from OnProductsFetched event handler
         }
 
         /// <summary>
@@ -736,28 +651,17 @@ namespace Balancy.Payments
 
         #endregion
 
-        #region IStoreListener Implementation
+        #region IAP v5 Event Handlers
 
         /// <summary>
-        /// Called when Unity IAP is ready to make purchases
+        /// Called when initialization completes
         /// </summary>
-        public void OnInitialized(IStoreController controller, IExtensionProvider extensions)
+        private void OnInitializationComplete()
         {
-            _storeController = controller;
-            _extensionProvider = extensions;
-            
-            // Get platform-specific extensions
-            _appleExtensions = extensions.GetExtension<IAppleExtensions>();
-            _googlePlayExtensions = extensions.GetExtension<IGooglePlayStoreExtensions>();
-            _amazonExtensions = extensions.GetExtension<IAmazonExtensions>();
-            
             _isInitialized = true;
             _isInitializing = false;
             
-            Debug.Log("Unity IAP initialized successfully");
-            
-            // Refresh our product list
-            RefreshProductList();
+            Debug.Log("Unity IAP v5 initialized successfully");
             
             // Process any pending purchases
             ProcessPendingPurchases();
@@ -770,66 +674,155 @@ namespace Balancy.Payments
         }
 
         /// <summary>
-        /// Called when Unity IAP initialization fails
+        /// Called when products are successfully fetched
         /// </summary>
-        public void OnInitializeFailed(InitializationFailureReason error)
+        private void OnProductsFetched(List<Product> products)
         {
-            OnInitializeFailed(error, null);
-        }
-        
-        /// <summary>
-        /// Called when Unity IAP initialization fails (with message)
-        /// </summary>
-        public void OnInitializeFailed(InitializationFailureReason error, string message)
-        {
-            _isInitialized = false;
-            _isInitializing = false;
+            Debug.Log($"Products fetched successfully: {products.Count}");
             
-            string errorMessage = $"Unity IAP initialization failed: {error}";
-            if (!string.IsNullOrEmpty(message))
+            // Update cached products
+            _cachedProducts.Clear();
+            foreach (var product in products)
             {
-                errorMessage += $" - {message}";
+                // Create product metadata
+                var metadata = new ProductMetadata
+                {
+                    LocalizedTitle = product.metadata.localizedTitle,
+                    LocalizedDescription = product.metadata.localizedDescription,
+                    LocalizedPriceString = product.metadata.localizedPriceString,
+                    LocalizedPrice = product.metadata.localizedPrice,
+                    IsoCurrencyCode = product.metadata.isoCurrencyCode
+                };
+
+                // Determine product type
+                ProductType productType;
+                switch (product.definition.type)
+                {
+                    case UnityEngine.Purchasing.ProductType.Consumable:
+                        productType = ProductType.Consumable;
+                        break;
+                    case UnityEngine.Purchasing.ProductType.NonConsumable:
+                        productType = ProductType.NonConsumable;
+                        break;
+                    case UnityEngine.Purchasing.ProductType.Subscription:
+                        productType = ProductType.Subscription;
+                        break;
+                    default:
+                        productType = ProductType.Consumable;
+                        break;
+                }
+
+                // Create our product info
+                var productInfo = new ProductInfo
+                {
+                    ProductId = product.definition.id,
+                    StoreSpecificId = product.definition.storeSpecificId,
+                    Type = productType,
+                    Metadata = metadata,
+                    IsAvailable = product.availableToPurchase,
+                    RawProductData = product
+                };
+
+                _cachedProducts.Add(productInfo);
             }
             
-            Debug.LogError(errorMessage);
-            
-            var callback = _onInitializeFailed;
-            _onInitialized = null;
-            _onInitializeFailed = null;
-            callback?.Invoke(errorMessage);
+            // Fetch purchases after products are loaded
+            _storeController.FetchPurchases();
         }
 
         /// <summary>
-        /// Called when a purchase completes
+        /// Called when purchases are successfully fetched
         /// </summary>
-        public PurchaseProcessingResult ProcessPurchase(PurchaseEventArgs args)
+        private void OnPurchasesFetched(Orders orders)
         {
-            var product = args.purchasedProduct;
+            Debug.Log($"Purchases fetched successfully");
             
-            Debug.Log($"Processing purchase: {product.definition.id}, Transaction: {product.transactionID}");
+            // Process any pending orders
+            foreach (var pendingOrder in orders.PendingOrders)
+            {
+                ProcessPendingOrder(pendingOrder);
+            }
+            
+            // Consider initialization complete
+            OnInitializationComplete();
+        }
+
+        /// <summary>
+        /// Called when a purchase is pending
+        /// </summary>
+        private void OnPurchasePending(Order order)
+        {
+            // Get product info from the cart
+            if (order?.CartOrdered == null || !order.CartOrdered.Items().Any())
+            {
+                Debug.LogWarning("OnPurchasePending called with no cart items");
+                return;
+            }
+            
+            var productId = order.CartOrdered.Items().First().Product.definition.id;
+            Debug.Log($"Processing pending purchase: {productId}");
+            
+            if (order is PendingOrder pendingOrder)
+            {
+                ProcessPendingOrder(pendingOrder);
+            }
+        }
+
+        /// <summary>
+        /// Called when a purchase is confirmed
+        /// </summary>
+        private void OnPurchaseConfirmed(Order order)
+        {
+            // Get product info from the cart
+            if (order?.CartOrdered == null || !order.CartOrdered.Items().Any())
+            {
+                Debug.LogWarning("OnPurchaseConfirmed called with no cart items");
+                return;
+            }
+            
+            var productId = order.CartOrdered.Items().First().Product.definition.id;
+            Debug.Log($"Purchase confirmed: {productId}");
+            // Purchase has been successfully confirmed
+        }
+
+        /// <summary>
+        /// Process a pending order
+        /// </summary>
+        private void ProcessPendingOrder(PendingOrder order)
+        {
+            // Get product info from the cart
+            if (order?.CartOrdered == null || !order.CartOrdered.Items().Any())
+            {
+                Debug.LogError("ProcessPendingOrder called with no cart items");
+                return;
+            }
+            
+            var cartItem = order.CartOrdered.Items().First();
+            var product = cartItem.Product;
+            var productId = product.definition.id;
             
             // Check for pending purchase
-            var pendingPurchase = _pendingPurchaseManager.GetPendingPurchaseByProductId(product.definition.id, PendingStatus.WaitingForStore);
+            var pendingPurchase = _pendingPurchaseManager.GetPendingPurchaseByProductId(productId, PendingStatus.WaitingForStore);
             
             // If this is not a pending purchase, it might be a restore or direct purchase
             if (pendingPurchase == null)
             {
-                Debug.LogError("failed to find Pending purchse");
-                //TODO this should be fixed
-                return PurchaseProcessingResult.Pending;
+                Debug.LogError($"Failed to find pending purchase for product: {productId}");
+                return;
             }
             
-            string receipt = product.receipt;
+            string receipt = order.Info.Receipt;
             string store = GetStoreFromReceipt(receipt);
             
-            pendingPurchase.TransactionId = product.transactionID;
+            pendingPurchase.TransactionId = order.Info.TransactionID;
             pendingPurchase.Receipt = receipt;
             pendingPurchase.Store = store;
             pendingPurchase.Status = PendingStatus.ProcessingValidation;
             pendingPurchase.ErrorMessage = null;
             pendingPurchase.Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            pendingPurchase.CurrencyCode = product.metadata.isoCurrencyCode;
-            pendingPurchase.Price = (float)product.metadata.localizedPrice;
+            // Get currency and price from the product metadata
+            pendingPurchase.CurrencyCode = product.metadata?.isoCurrencyCode ?? "USD";
+            pendingPurchase.Price = (float)(product.metadata?.localizedPrice ?? 0.0m);
             _pendingPurchaseManager.SavePendingPurchases();
             
             // For restore operations, add to the list of restored purchases
@@ -838,48 +831,47 @@ namespace Balancy.Payments
             {
                 var purchaseReceipt = new PurchaseReceipt
                 {
-                    ProductId = product.definition.id,
-                    TransactionId = product.transactionID,
+                    ProductId = productId,
+                    TransactionId = order.Info.TransactionID,
                     Receipt = receipt,
                     Store = store,
-                    PurchaseTime = DateTime.Now,
-                    RawReceipt = product
+                    PurchaseTime = DateTime.Now
                 };
                 
                 _restoredPurchases.Add(new PurchaseResult
                 {
                     Status = PurchaseStatus.Success,
-                    ProductId = product.definition.id,
+                    ProductId = productId,
                     Receipt = purchaseReceipt,
-                    TransactionId = product.transactionID,
-                    Price = (float)product.metadata.localizedPrice,
-                    CurrencyCode = product.metadata.isoCurrencyCode,
+                    TransactionId = order.Info.TransactionID,
+                    Price = (float)(product?.metadata?.localizedPrice ?? 0.0m),
+                    CurrencyCode = product?.metadata?.isoCurrencyCode ?? "USD",
                 });
             }
             
             ValidatePurchaseReceipt(pendingPurchase);
             
-            // If we want to control finishing the transaction ourselves, return Complete
-            // Otherwise return Pending and call ConfirmPendingPurchase later
-            return PurchaseProcessingResult.Pending;
+            // Confirm the purchase
+            _storeController.ConfirmPurchase(order);
         }
 
         /// <summary>
         /// Called when a purchase fails
         /// </summary>
-        public void OnPurchaseFailed(Product product, PurchaseFailureDescription failureDescription)
+        private void OnPurchaseFailed(FailedOrder failedOrder)
         {
-            Debug.Log($"!!Purchase failed: {product.definition.id}");
-            OnPurchaseFailed(product, failureDescription.reason);
-        }
-        
-        public void OnPurchaseFailed(Product product, PurchaseFailureReason failureReason)
-        {
-            Debug.Log($"Purchase failed: {product.definition.id}, Reason: {failureReason}");
+            // Get product info from the cart
+            string productId = "unknown";
+            if (failedOrder?.CartOrdered != null && failedOrder.CartOrdered.Items().Any())
+            {
+                productId = failedOrder.CartOrdered.Items().First().Product.definition.id;
+            }
+            
+            Debug.Log($"Purchase failed: {productId}, Reason: {failedOrder.FailureReason}");
             
             // Get the status based on the failure reason
             PurchaseStatus status;
-            switch (failureReason)
+            switch (failedOrder.FailureReason)
             {
                 case PurchaseFailureReason.UserCancelled:
                     status = PurchaseStatus.Cancelled;
@@ -895,16 +887,16 @@ namespace Balancy.Payments
                     break;
             }
 
-            var pendingPurchase =
-                _pendingPurchaseManager.GetPendingPurchaseByProductId(product.definition.id,
-                    PendingStatus.WaitingForStore);
+            var pendingPurchase = _pendingPurchaseManager.GetPendingPurchaseByProductId(
+                productId, PendingStatus.WaitingForStore);
+            
             if (pendingPurchase != null)
             {
                 ReportPaymentStatusToBalancy(pendingPurchase.ProductInfo, new PurchaseResult
                 {
                     Status = status,
-                    ProductId = product.definition.id,
-                    ErrorMessage = failureReason.ToString()
+                    ProductId = productId,
+                    ErrorMessage = failedOrder.Details
                 });
 
                 _pendingPurchaseManager.RemovePendingPurchase(pendingPurchase);
