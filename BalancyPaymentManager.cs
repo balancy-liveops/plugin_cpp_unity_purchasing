@@ -390,10 +390,10 @@ namespace Balancy.Payments
         private void TryToHardPurchase(Balancy.Actions.BalancyProductInfo productInfo)
         {
             var productId = productInfo?.ProductId;
-            
+
             if (string.IsNullOrEmpty(productId))
             {
-                Balancy.API.FinalizedHardPurchase(Actions.PurchaseResult.Failed, productInfo, null, null);
+                Balancy.API.FinalizedHardPurchase(new Actions.PurchaseRequestInfo { Result = Actions.PurchaseResult.Failed }, productInfo, null, null);
                 return;
             }
 
