@@ -102,12 +102,6 @@ namespace Balancy.Payments
 
             try
             {
-                // Initialize Unity Gaming Services
-                var options = new InitializationOptions()
-                    .SetEnvironmentName(UnityEnvironment);
-                
-                await UnityServices.InitializeAsync(options);
-                
                 // Initialize IAP v5
                 await InitializeIAPv5();
             }
