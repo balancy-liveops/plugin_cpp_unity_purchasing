@@ -518,20 +518,20 @@ namespace Balancy.Payments
                 Price = result.Price,
                 OrderId = result.TransactionId
             };
-
+            
 #if UNITY_EDITOR
             bool requireValidation = false;
 #else
             bool requireValidation = true;
 #endif
-
-            Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status, result.ErrorMessage), productInfo, paymentInfo, (validationSuccess, removeFromPending) =>
+                
+            Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status), productInfo, paymentInfo, (validationSuccess, removeFromPending) =>
             {
                 if (validationSuccess)
                 {
                     // In v5, purchase confirmation is handled by the OnPurchaseConfirmed event
                     Debug.Log("Purchase validation successful");
-
+                    
                     _pendingPurchaseManager.RemovePendingPurchase(paymentInfo.ProductId, paymentInfo.OrderId);
                     //TODO report to apple for claiming
                 }
@@ -548,21 +548,21 @@ namespace Balancy.Payments
                 }
             }, requireValidation);
         }
-
-        private static Actions.PurchaseRequestInfo ConvertStatusToResult(PurchaseStatus status, string error)
+        
+        private static Actions.PurchaseResult ConvertStatusToResult(PurchaseStatus status)
         {
             switch (status)
             {
                 case PurchaseStatus.Success:
-                    return new Actions.PurchaseRequestInfo {Error = error, Result = Actions.PurchaseResult.Success};
+                    return Actions.PurchaseResult.Success;
                 case PurchaseStatus.Failed:
                 case PurchaseStatus.AlreadyOwned:
                 case PurchaseStatus.InvalidProduct:
-                    return new Actions.PurchaseRequestInfo {Error = error, Result = Actions.PurchaseResult.Failed};
+                    return Actions.PurchaseResult.Failed;
                 case PurchaseStatus.Pending:
-                    return new Actions.PurchaseRequestInfo {Error = error, Result = Actions.PurchaseResult.Pending};
+                    return Actions.PurchaseResult.Pending;
                 case PurchaseStatus.Cancelled:
-                    return new Actions.PurchaseRequestInfo {Error = error, Result = Actions.PurchaseResult.Cancelled};
+                    return Actions.PurchaseResult.Cancelled;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(status), status, null);
             }
