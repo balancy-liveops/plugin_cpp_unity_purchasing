@@ -1,4 +1,3 @@
-#if !NO_UNITY_PURCHASING
 // BalancyPaymentManager.cs
 
 using System;
@@ -14,6 +13,8 @@ namespace Balancy.Payments
     /// </summary>
     public class BalancyPaymentManager : MonoBehaviour
     {
+        private static readonly WaitForFixedUpdate FixedUpdate = new WaitForFixedUpdate();
+        
         #region Singleton
 
         private static BalancyPaymentManager _instance;
@@ -35,6 +36,11 @@ namespace Balancy.Payments
                 
                 return _instance;
             }
+        }
+
+        public static void SetPaymentSystem(IBalancyPaymentSystem system)
+        {
+            Instance._paymentSystem = system;
         }
 
         #endregion
@@ -134,14 +140,21 @@ namespace Balancy.Payments
                 _onInitializeFailed += onInitializeFailed;
             }
 
-            _paymentSystem = CreatePaymentSystem();
-            
-            if (_paymentSystem is UnityPurchaseSystem unitySystem)
-                ApplyConfig(unitySystem);
-
-            _paymentSystem.Initialize(OnPaymentSystemInitialized, OnPaymentSystemInitializeFailed);
+            InitPaymentSystem();
         }
 
+        private void InitPaymentSystem()
+        {
+            CreatePaymentSystem(() =>
+            {
+#if !NO_UNITY_PURCHASING
+            if (_paymentSystem is UnityPurchaseSystem unitySystem)
+                ApplyConfig(unitySystem);
+#endif
+                _paymentSystem.Initialize(OnPaymentSystemInitialized, OnPaymentSystemInitializeFailed);
+            });
+        }
+#if !NO_UNITY_PURCHASING
         private void ApplyConfig(UnityPurchaseSystem unitySystem)
         {
             var productsAndTypes = Balancy.API.GetProductsIdAndType();
@@ -162,7 +175,7 @@ namespace Balancy.Payments
                 }
             }
         }
-
+#endif
         /// <summary>
         /// Get all products
         /// </summary>
@@ -359,10 +372,24 @@ namespace Balancy.Payments
         /// <summary>
         /// Create the appropriate payment system based on platform
         /// </summary>
-        private IBalancyPaymentSystem CreatePaymentSystem()
+        private void CreatePaymentSystem(Action inited)
         {
-            // For now, we just have Unity's system
-            return UnityPurchaseSystem.Instance;
+            WaitUntil(() => this._paymentSystem != null, inited);
+        }
+        
+        internal Coroutine WaitUntil(Func<bool> condition, Action callback)
+        {
+            return StartCoroutine(WaitUntilInternal(condition, callback));
+        }
+        
+        private static IEnumerator WaitUntilInternal(Func<bool> condition, Action callback)
+        {
+            while (!condition())
+            {
+                yield return FixedUpdate;
+            }
+
+            callback?.Invoke();
         }
 
         /// <summary>
@@ -465,4 +492,3 @@ namespace Balancy.Payments
         #endregion
     }
 }
-#endif

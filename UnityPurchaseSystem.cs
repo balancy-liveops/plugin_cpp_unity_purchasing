@@ -656,7 +656,8 @@ namespace Balancy.Payments
             _isInitializing = false;
             
             Debug.Log("Unity IAP v5 initialized successfully");
-            
+            BalancyPaymentManager.SetPaymentSystem(this);
+
             // Process any pending purchases
             ProcessPendingPurchases();
             
@@ -664,6 +665,7 @@ namespace Balancy.Payments
             var callback = _onInitialized;
             _onInitialized = null;
             _onInitializeFailed = null;
+            
             callback?.Invoke();
         }
 
