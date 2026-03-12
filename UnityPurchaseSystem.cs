@@ -66,6 +66,22 @@ namespace Balancy.Payments
             }
         }
         
+        [RuntimeInitializeOnLoadMethod]
+        internal static void SetupLink()
+        {
+            BalancyPaymentManager.SetPaymentSystem(Instance);
+        }
+        
+#if UNITY_EDITOR
+        [UnityEditor.InitializeOnLoadMethod]
+        private static void InitEditor()
+        {
+            if (!Application.isPlaying)
+                return;
+            BalancyPaymentManager.SetPaymentSystem(Instance);
+        }
+#endif
+        
         /// <summary>
         /// Environment for Unity Gaming Services
         /// </summary>
@@ -656,7 +672,6 @@ namespace Balancy.Payments
             _isInitializing = false;
             
             Debug.Log("Unity IAP v5 initialized successfully");
-            BalancyPaymentManager.SetPaymentSystem(this);
 
             // Process any pending purchases
             ProcessPendingPurchases();
