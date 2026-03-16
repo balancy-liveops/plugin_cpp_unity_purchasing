@@ -245,7 +245,7 @@ namespace Balancy.Payments
             lock (_lock)
             {
                 long cutoffTime = DateTimeOffset.UtcNow.AddDays(-olderThanDays).ToUnixTimeSeconds();
-                int removedCount = _data.Purchases.RemoveAll(p => p.Timestamp < cutoffTime || p.Status == PendingStatus.WaitingForStore);
+                int removedCount = _data.Purchases.RemoveAll(p => p.Timestamp < cutoffTime);
                 
                 if (removedCount > 0)
                 {
