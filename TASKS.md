@@ -402,15 +402,15 @@ The only way to use these methods is through the Balancy callback system (which 
 
 ### Fix
 
-If these public methods are intended to be callable by game developers (as documented in the README), change `Instance` to public:
+The intended developer-facing API is through `Balancy.API` (e.g., `Balancy.API.InitPurchase()`, `Balancy.API.RestorePurchases()`) and `Balancy.Callbacks` — not through `BalancyPaymentManager` directly. The `Instance` being private is by design.
 
-```csharp
-public static BalancyPaymentManager Instance
-```
-
-If the intent is that all interaction goes through Balancy's callback system and these methods should NOT be called directly, then either:
-- Make the methods `internal` to match, or
-- Keep `Instance` private and document that developers should use Balancy's API instead
+Make the public methods on `BalancyPaymentManager` `internal` instead, since they are only called by the Balancy SDK internals:
+- `GetProducts` → `internal`
+- `GetProduct` → `internal`
+- `RestorePurchases` → `internal`
+- `GetSubscriptionsInfo` → `internal`
+- `IsInitialized` → `internal`
+- `IsPurchasingSupported` → `internal`
 
 ---
 

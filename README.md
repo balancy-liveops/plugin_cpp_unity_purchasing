@@ -111,37 +111,69 @@ Initialization is **fully automatic**. Here is the sequence:
 ### Listening for Payment Ready
 
 ```csharp
-// Subscribe before Balancy initializes, or check IsInitialized()
+// Subscribe before Balancy initializes
 Balancy.Callbacks.OnPaymentIsReady += () =>
 {
     Debug.Log("Payment system is ready!");
-    // Safe to query products, initiate purchases, etc.
+    // Safe to initiate purchases, query product info, etc.
 };
-```
-
-### Checking Initialization State
-
-```csharp
-bool ready = BalancyPaymentManager.Instance.IsInitialized();
-bool supported = BalancyPaymentManager.Instance.IsPurchasingSupported();
 ```
 
 ## Purchase Flow
 
 ### How Purchases Work
 
-Purchases in Balancy are triggered through the Balancy economy system (Store Items, Offers, Shop Slots). When a "hard purchase" (real-money IAP) is needed, Balancy calls the registered `HardPurchaseCallback`, which the `BalancyPaymentManager` handles automatically.
+Purchases are triggered through the Balancy API — **not** by calling `BalancyPaymentManager` directly. When a "hard purchase" (real-money IAP) is needed, Balancy internally calls the registered `HardPurchaseCallback`, which the `BalancyPaymentManager` handles automatically.
 
-The flow:
+**Initiating a purchase from game code:**
 
-1. Game logic triggers a purchase through Balancy (e.g., player taps a store item)
-2. Balancy calls the `HardPurchaseCallback` with a `BalancyProductInfo`
-3. `BalancyPaymentManager.PurchaseProduct()` is called internally
-4. A `PendingPurchase` record is created and saved to disk
-5. `StoreController.PurchaseProduct()` is called (native store dialog appears)
-6. On success: `OnPurchasePending` fires → receipt is extracted → `ReportPaymentStatusToBalancy()` is called for server-side validation → `StoreController.ConfirmPurchase()` confirms the transaction
-7. On failure: `OnPurchaseFailed` fires → status is reported to Balancy → pending purchase is cleaned up
-8. On successful validation: Balancy grants the configured rewards automatically
+```csharp
+// Purchase a shop slot (recommended for most use cases)
+Balancy.API.InitPurchaseShop(shopSlot, (success, error) =>
+{
+    Debug.Log($"Shop slot purchase complete: success={success}, error={error}");
+});
+
+// Purchase an offer
+Balancy.API.InitPurchaseOffer(offerInfo, (success, error) =>
+{
+    Debug.Log($"Offer purchase complete: success={success}, error={error}");
+});
+
+// Purchase from an offer group
+Balancy.API.InitPurchaseOffer(offerGroupInfo, storeItem, (success, error) =>
+{
+    Debug.Log($"Offer group purchase complete: success={success}, error={error}");
+});
+
+// Purchase a store item directly (deprecated — prefer InitPurchaseShop or InitPurchaseOffer)
+Balancy.API.InitPurchase(storeItem, (success, error) =>
+{
+    Debug.Log($"Purchase complete: success={success}, error={error}");
+});
+```
+
+These methods automatically determine whether the purchase is "hard" (real money via IAP) or "soft" (in-game currency). For hard purchases, the BalancyPayments module handles the store interaction. For soft purchases, the transaction is processed locally.
+
+**Additional soft purchase methods** (for manual control, most developers won't need these):
+
+```csharp
+Balancy.API.SoftPurchaseShopSlot(shopSlot);       // Soft-purchase a shop slot
+Balancy.API.SoftPurchaseGameOffer(offerInfo);      // Soft-purchase an offer
+Balancy.API.SoftPurchaseGameOfferGroup(offerGroupInfo, storeItem); // Soft-purchase from offer group
+```
+
+**The internal flow (handled automatically):**
+
+1. Game code calls `Balancy.API.InitPurchase*()` (or player taps a store item in the Balancy WebView UI)
+2. Balancy determines if this is a "hard" (real-money) or "soft" (in-game currency) purchase
+3. For hard purchases, Balancy calls the `HardPurchaseCallback` with a `BalancyProductInfo`
+4. `BalancyPaymentManager.PurchaseProduct()` is called internally
+5. A `PendingPurchase` record is created and saved to disk
+6. `StoreController.PurchaseProduct()` is called (native store dialog appears)
+7. On success: `OnPurchasePending` fires → receipt is extracted → `ReportPaymentStatusToBalancy()` is called for server-side validation → `StoreController.ConfirmPurchase()` confirms the transaction
+8. On failure: `OnPurchaseFailed` fires → status is reported to Balancy → pending purchase is cleaned up
+9. On successful validation: Balancy grants the configured rewards automatically
 
 ### Purchase Types
 
@@ -195,21 +227,28 @@ public enum ProductType
 
 ## Querying Product Information
 
+Product information is queried through the `Balancy.API` — **not** through `BalancyPaymentManager` directly (its singleton `Instance` is private and internal).
+
 ### Get All Products
 
 ```csharp
-var manager = BalancyPaymentManager.Instance;
-
-manager.GetProducts(products =>
+Balancy.API.GetProducts(response =>
 {
-    foreach (var product in products)
+    if (response.Success)
     {
-        Debug.Log($"Product: {product.ProductId}");
-        Debug.Log($"  Title: {product.Metadata.LocalizedTitle}");
-        Debug.Log($"  Price: {product.Metadata.LocalizedPriceString}");
-        Debug.Log($"  Currency: {product.Metadata.IsoCurrencyCode}");
-        Debug.Log($"  Available: {product.IsAvailable}");
-        Debug.Log($"  Type: {product.Type}");
+        foreach (var product in response.Products)
+        {
+            Debug.Log($"Product: {product.Name}");
+            Debug.Log($"  Product ID: {product.ProductId}");
+            Debug.Log($"  Price: {product.Price}");
+            Debug.Log($"  Description: {product.Description}");
+            Debug.Log($"  Localized Name: {product.LocalizedName}");
+            Debug.Log($"  Localized Description: {product.LocalizedDescription}");
+        }
+    }
+    else
+    {
+        Debug.LogError($"Failed to get products: {response.ErrorMessage}");
     }
 });
 ```
@@ -217,21 +256,49 @@ manager.GetProducts(products =>
 ### Get a Specific Product
 
 ```csharp
-manager.GetProduct("com.mygame.gems100", product =>
+Balancy.API.GetProduct("com.mygame.gems100", response =>
 {
-    if (product != null && product.IsAvailable)
+    if (response.Success && response.Product != null)
     {
-        Debug.Log($"Price: {product.Metadata.LocalizedPriceString}");
+        var product = response.Product;
+        Debug.Log($"Product: {product.Name}");
+        Debug.Log($"  Price: {product.Price}");
+        Debug.Log($"  Product ID: {product.PlatformProductId}");
+    }
+    else
+    {
+        Debug.LogError($"Product not found: {response.ErrorMessage}");
     }
 });
 ```
 
-### Force Refresh (bypass cache)
+> **Note:** `Balancy.API.GetProduct()` internally calls `Balancy.API.GetProducts()` and filters by product ID.
+
+### Displaying Localized Prices in Custom UI
+
+If you need to display store-localized prices (from Apple/Google) in your own UI rather than the Balancy WebView, register a product info callback:
 
 ```csharp
-manager.GetProducts(products => { /* ... */ }, forceRefresh: true);
-manager.GetProduct("com.mygame.gems100", product => { /* ... */ }, forceRefresh: true);
+Balancy.Actions.Purchasing.SetGetHardPurchaseInfoCallback((productId, callback) =>
+{
+    Balancy.API.GetProduct(productId, response =>
+    {
+        var info = new Balancy.Actions.Purchasing.HardProductInfo();
+        if (response.Success && response.Product != null)
+        {
+            var product = response.Product;
+            info.LocalizedTitle = product.LocalizedName ?? product.Name;
+            info.LocalizedDescription = product.LocalizedDescription ?? product.Description;
+            info.LocalizedPriceString = $"${product.Price:F2}";
+            info.LocalizedPrice = product.Price;
+            info.IsoCurrencyCode = "USD";
+        }
+        callback?.Invoke(info);
+    });
+});
 ```
+
+> **Note:** The Balancy WebView UI uses this callback internally to display product prices. If you use the Balancy WebView for your store UI, this is handled for you.
 
 ## Restore Purchases
 
@@ -239,30 +306,22 @@ Restore purchases must be **triggered explicitly** by the developer. It is **not
 
 ### How It Works
 
-When the payment system initializes, it registers a restore callback with Balancy:
+When the payment system initializes, it registers a restore callback with Balancy internally:
 ```csharp
 Balancy.Actions.Purchasing.SetRestorePurchasesCallback(RestorePurchases);
 ```
 
-You can trigger restore from your UI:
+Trigger restore from your UI by calling `Balancy.API.RestorePurchases()`:
 
 ```csharp
-BalancyPaymentManager.Instance.RestorePurchases(results =>
+// Attach this to a "Restore Purchases" button in your UI
+public void OnRestoreButtonClicked()
 {
-    Debug.Log($"Restored {results.Count} purchases");
-
-    foreach (var result in results)
-    {
-        Debug.Log($"  Product: {result.ProductId}, Status: {result.Status}");
-
-        if (result.Status == PurchaseStatus.Success)
-        {
-            // Purchase was successfully restored and validated
-            Debug.Log($"  Transaction: {result.TransactionId}");
-        }
-    }
-});
+    Balancy.API.RestorePurchases();
+}
 ```
+
+This invokes the registered restore callback inside `BalancyPaymentManager`, which calls `UnityPurchaseSystem.RestorePurchases()` under the hood.
 
 ### Restore vs. Pending Purchase Recovery
 
@@ -277,10 +336,13 @@ These are two different mechanisms:
 
 ### Listening for Restore Events
 
+Subscribe to the `OnPurchasesRestored` event on the manager to be notified when restore completes. Since `BalancyPaymentManager.Instance` is private, listen through Balancy callbacks instead:
+
 ```csharp
-BalancyPaymentManager.Instance.OnPurchasesRestored += (List<PurchaseResult> results) =>
+// Listen for individual restored purchases via the standard purchase callbacks
+Balancy.Callbacks.OnHardPurchasedStoreItem += (paymentInfo, storeItem) =>
 {
-    Debug.Log($"Purchases restored: {results.Count}");
+    Debug.Log($"Restored/purchased: {storeItem.Name}");
 };
 ```
 
@@ -319,32 +381,18 @@ Old entries (> 30 days) are automatically cleaned up on app startup.
 
 ## Subscription Info
 
-```csharp
-BalancyPaymentManager.Instance.GetSubscriptionsInfo(subscriptions =>
-{
-    foreach (var sub in subscriptions)
-    {
-        Debug.Log($"Subscription: {sub.ProductId}");
-        Debug.Log($"  Subscribed: {sub.IsSubscribed}");
-        Debug.Log($"  Expires: {sub.ExpireDate}");
-        Debug.Log($"  Auto-renewing: {sub.IsAutoRenewing}");
-        Debug.Log($"  Free trial: {sub.IsFreeTrial}");
-        Debug.Log($"  Remaining: {sub.RemainingTime}");
-    }
-});
-```
-
-> **Known Limitation:** The current subscription info implementation returns placeholder data. Real subscription status should be verified through your backend or the Balancy Dashboard. This is planned for improvement.
+> **Known Limitation:** The `GetSubscriptionsInfo()` method is not yet implemented — it returns placeholder data with hardcoded values. Do not rely on it for subscription status. Verify subscription state through your backend or the Balancy Dashboard. This is planned for improvement.
 
 ## Receipt Validation
 
-Receipt validation happens automatically during the purchase flow:
+Receipt validation happens automatically during the purchase flow — developers do not need to call validation methods manually:
 
-1. After the store confirms a purchase, `ReportPaymentStatusToBalancy()` is called.
+1. After the store confirms a purchase, `ReportPaymentStatusToBalancy()` is called internally.
 2. This constructs a `PaymentInfo` object with the product ID, receipt, currency, price, and order ID.
 3. `Balancy.API.FinalizedHardPurchase()` sends the receipt to Balancy servers for validation.
 4. In the Unity Editor, validation is **skipped** (`requireValidation = false`) to allow testing without real receipts.
 5. In builds, validation is **enforced** (`requireValidation = true`).
+6. On successful validation, `productInfo.ReportThePurchase(paymentInfo)` is called, which triggers the appropriate `Balancy.Callbacks.OnHardPurchased*` event and grants rewards.
 
 ### PaymentInfo Fields
 
@@ -471,7 +519,7 @@ The module supports the following preprocessor defines:
 ### Products not showing up
 - Verify product IDs in the Balancy Dashboard match the store product IDs exactly
 - Ensure products are approved/active in the App Store / Google Play Console
-- Call `GetProducts` with `forceRefresh: true` to bypass cache
+- Check that `Balancy.Callbacks.OnPaymentIsReady` has fired before querying products
 
 ### Purchases failing
 - Check that the device has a valid store account signed in
@@ -482,6 +530,22 @@ The module supports the following preprocessor defines:
 - Verify `balancy_pending_purchases.json` exists in `Application.persistentDataPath`
 - Note: purchases in `WaitingForStore` status are cleaned up on startup
 - Only `ProcessingValidation` purchases are re-validated on restart
+
+## Balancy.API Purchasing Methods Reference
+
+| Method | Description |
+|--------|-------------|
+| `API.InitPurchaseShop(shopSlot, callback)` | Purchase a shop slot (handles both hard and soft prices) |
+| `API.InitPurchaseOffer(offerInfo, callback)` | Purchase a single offer |
+| `API.InitPurchaseOffer(offerGroupInfo, storeItem, callback)` | Purchase from an offer group |
+| `API.InitPurchase(storeItem, callback)` | Direct store item purchase (**deprecated** — prefer `InitPurchaseShop` or `InitPurchaseOffer`) |
+| `API.RestorePurchases()` | Trigger restore of previously purchased products |
+| `API.GetProducts(callback)` | Get all products defined in the Balancy Dashboard |
+| `API.GetProduct(productId, callback)` | Get a specific product by ID |
+| `API.FinalizedHardPurchase(...)` | Report a completed store transaction for server-side validation (called internally by BalancyPayments) |
+| `API.SoftPurchaseShopSlot(shopSlot)` | Soft-purchase a shop slot with in-game currency |
+| `API.SoftPurchaseGameOffer(offerInfo)` | Soft-purchase an offer |
+| `API.SoftPurchaseGameOfferGroup(offerGroupInfo, storeItem)` | Soft-purchase from an offer group |
 
 ## Data Types Reference
 
@@ -565,7 +629,6 @@ public class SubscriptionInfo
 
 ```csharp
 using UnityEngine;
-using Balancy.Payments;
 
 public class PurchaseExample : MonoBehaviour
 {
@@ -580,34 +643,29 @@ public class PurchaseExample : MonoBehaviour
 
     void OnPaymentReady()
     {
-        Debug.Log("Payment system ready — querying products");
-
-        // 3. Query available products
-        BalancyPaymentManager.Instance.GetProducts(products =>
-        {
-            foreach (var p in products)
-            {
-                Debug.Log($"{p.ProductId}: {p.Metadata.LocalizedPriceString}");
-            }
-        });
+        Debug.Log("Payment system ready");
     }
 
     void OnStoreItemPurchased(Balancy.Core.PaymentInfo paymentInfo, Balancy.StoreItem storeItem)
     {
-        // 4. Purchase validated and rewards granted by Balancy
+        // 3. Called after purchase is validated and rewards are granted by Balancy
         Debug.Log($"Purchased {storeItem.Name} for {paymentInfo.Price} {paymentInfo.Currency}");
     }
 
-    // 5. Restore purchases (attach to a UI button)
+    // 4. Initiate a purchase (e.g., from a custom store UI button)
+    public void OnBuyButtonClicked(Balancy.StoreItem storeItem)
+    {
+        Balancy.API.InitPurchase(storeItem, (success, error) =>
+        {
+            if (!success)
+                Debug.LogError($"Purchase failed: {error}");
+        });
+    }
+
+    // 5. Restore purchases (attach to a "Restore Purchases" UI button — required by Apple)
     public void OnRestoreButtonClicked()
     {
-        BalancyPaymentManager.Instance.RestorePurchases(results =>
-        {
-            foreach (var r in results)
-            {
-                Debug.Log($"Restored: {r.ProductId} — {r.Status}");
-            }
-        });
+        Balancy.API.RestorePurchases();
     }
 
     void OnDestroy()
