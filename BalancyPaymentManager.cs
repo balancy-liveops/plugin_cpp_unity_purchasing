@@ -102,14 +102,6 @@ namespace Balancy.Payments
             Instance.Initialize();
         }
 
-        private void OnApplicationPause(bool pauseStatus)
-        {
-            // When resuming, check for pending purchases
-            if (!pauseStatus && _isInitialized && _paymentSystem != null)
-            {
-                _paymentSystem.ProcessPendingPurchases();
-            }
-        }
 
         #endregion
         

@@ -498,7 +498,7 @@ namespace Balancy.Payments
         /// </summary>
         private void ValidatePurchaseReceipt(PendingPurchase purchase)
         {
-            Debug.Log($"Purchase completed for {purchase.ProductInfo.ProductId}");
+            Debug.Log($"Purchase completed for {purchase.ProductInfo.ProductId} TransactionId = " + purchase.TransactionId);
             
             // Create receipt for callback
             var receipt = new PurchaseReceipt

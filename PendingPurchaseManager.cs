@@ -88,15 +88,12 @@ namespace Balancy.Payments
         {
             lock (_lock)
             {
-                // Check if this product is already pending
-                // var existing = _data.Purchases.Find(p => p.Equals(productInfo) && 
-                //     (p.Status == PendingStatus.WaitingForStore || p.Status == PendingStatus.ProcessingValidation));
-                //
-                // if (existing != null)
-                // {
-                //     Debug.LogWarning($"Product {productInfo.ProductId} already has a pending purchase. Returning existing.");
-                //     return existing;
-                // }
+                // Replace any stale WaitingForStore entries for the same product.
+                // The new purchase supersedes the old one — same ProductId, but with
+                // the current session's OfferInstanceId.
+                _data.Purchases.RemoveAll(p =>
+                    p.ProductInfo.ProductId == productInfo.ProductId &&
+                    p.Status == PendingStatus.WaitingForStore);
 
                 var pendingPurchase = new PendingPurchase
                 {
@@ -182,15 +179,15 @@ namespace Balancy.Payments
         {
             lock (_lock)
             {
-                return _data.Purchases.Find(p => p.ProductInfo.ProductId == productId);
+                return _data.Purchases.FindLast(p => p.ProductInfo.ProductId == productId);
             }
         }
-        
+
         public PendingPurchase GetPendingPurchaseByProductId(string productId, PendingStatus status)
         {
             lock (_lock)
             {
-                return _data.Purchases.Find(p => p.ProductInfo.ProductId == productId && p.Status == status);
+                return _data.Purchases.FindLast(p => p.ProductInfo.ProductId == productId && p.Status == status);
             }
         }
 
