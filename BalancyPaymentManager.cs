@@ -402,8 +402,8 @@ namespace Balancy.Payments
             
             Balancy.Actions.Purchasing.SetHardPurchaseCallback(TryToHardPurchase);
             Balancy.Actions.Purchasing.SetRestorePurchasesCallback(RestorePurchases);
-
-            Balancy.Callbacks.SetPaymentIsReady();
+            
+            Balancy.Callbacks.OnPaymentIsReady?.Invoke();
         }
 
         private void TryToHardPurchase(Balancy.Actions.BalancyProductInfo productInfo)
