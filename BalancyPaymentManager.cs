@@ -139,32 +139,70 @@ namespace Balancy.Payments
         {
             CreatePaymentSystem(() =>
             {
+                Debug.LogWarning($"[BalancyPayments] _paymentSystem ready: {_paymentSystem.GetType().Name}");
+                FetchProductsAndInitialize();
+            });
+        }
+
+        private void FetchProductsAndInitialize()
+        {
+            Debug.LogWarning("[BalancyPayments] Fetching products via Balancy.API.GetProducts(...)");
+            Balancy.API.GetProducts(response =>
+            {
+                if (response == null || !response.Success || response.Products == null || response.Products.Count == 0)
+                {
+                    var errorMessage = response == null
+                        ? "null response"
+                        : $"success={response.Success}, products={(response.Products == null ? 0 : response.Products.Count)}, error={response.ErrorMessage}";
+                    LogError($"GetProducts returned no usable data ({errorMessage}). Skipping StoreKit init — payment system will retry on next OnCloudSynced.");
+                    OnPaymentSystemInitializeFailed("No products available");
+                    return;
+                }
+
+                Debug.LogWarning($"[BalancyPayments] GetProducts returned {response.Products.Count} products");
+
 #if !NO_UNITY_PURCHASING
-            if (_paymentSystem is UnityPurchaseSystem unitySystem)
-                ApplyConfig(unitySystem);
+                if (_paymentSystem is UnityPurchaseSystem unitySystem)
+                    ApplyConfig(unitySystem, response.Products);
 #endif
+
+                Debug.LogWarning("[BalancyPayments] Calling _paymentSystem.Initialize(...)");
                 _paymentSystem.Initialize(OnPaymentSystemInitialized, OnPaymentSystemInitializeFailed);
             });
         }
 #if !NO_UNITY_PURCHASING
-        private void ApplyConfig(UnityPurchaseSystem unitySystem)
+        private void ApplyConfig(UnityPurchaseSystem unitySystem, List<Balancy.Core.Responses.Product> products)
         {
-            var productsAndTypes = Balancy.API.GetProductsIdAndType();
             //TODO - implement this
             // unitySystem.AutoFinishTransactions = AutoFinishTransactions;
             unitySystem.UnityEnvironment = "production";
-            
-            for (int i = 0; i < productsAndTypes.Length; i += 2)
+
+            foreach (var product in products)
             {
-                var id = productsAndTypes[i];
-                if (int.TryParse(productsAndTypes[i + 1], out var type))
+                var id = product.PlatformProductId;
+                if (string.IsNullOrEmpty(id))
                 {
-                    unitySystem.AddProduct(id, (ProductType)type);
+                    Debug.LogError($"[BalancyPayments] ApplyConfig: skipping product '{product.ProductId}' — empty PlatformProductId");
+                    continue;
                 }
-                else
-                {
-                    Debug.LogError("Failed to parse type " + id + " : " + productsAndTypes[i + 1]);
-                }
+
+                var type = ConvertProductType(product.Type);
+                unitySystem.AddProduct(id, type);
+            }
+        }
+
+        private static ProductType ConvertProductType(Balancy.Core.Responses.ProductType coreType)
+        {
+            switch (coreType)
+            {
+                case Balancy.Core.Responses.ProductType.Consumable:
+                    return ProductType.Consumable;
+                case Balancy.Core.Responses.ProductType.NonConsumable:
+                    return ProductType.NonConsumable;
+                case Balancy.Core.Responses.ProductType.Subscription:
+                    return ProductType.Subscription;
+                default:
+                    return ProductType.Consumable;
             }
         }
 #endif
@@ -403,7 +441,7 @@ namespace Balancy.Payments
             Balancy.Actions.Purchasing.SetHardPurchaseCallback(TryToHardPurchase);
             Balancy.Actions.Purchasing.SetRestorePurchasesCallback(RestorePurchases);
             
-            Balancy.Callbacks.OnPaymentIsReady?.Invoke();
+            Balancy.Callbacks.SetPaymentIsReady();
         }
 
         private void TryToHardPurchase(Balancy.Actions.BalancyProductInfo productInfo)

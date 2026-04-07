@@ -159,8 +159,9 @@ namespace Balancy.Payments
                 _storeController.OnPurchaseConfirmed += OnPurchaseConfirmed;
                 _storeController.OnPurchaseFailed += OnPurchaseFailed;
                 _storeController.OnProductsFetched += OnProductsFetched;
+                _storeController.OnProductsFetchFailed += OnProductsFetchFailed;
                 _storeController.OnPurchasesFetched += OnPurchasesFetched;
-                
+
                 // Connect to the store
                 await _storeController.Connect();
                 
@@ -178,7 +179,7 @@ namespace Balancy.Payments
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Failed to initialize IAP v5: {ex.Message}");
+                Debug.LogError($"Failed to initialize IAP v5: {ex.Message}\n{ex.StackTrace}");
                 _isInitializing = false;
                 _onInitializeFailed?.Invoke(ex.Message);
                 _onInitializeFailed = null;
@@ -470,7 +471,6 @@ namespace Balancy.Payments
         /// </summary>
         public void ProcessPendingPurchases()
         {
-            Debug.LogWarning("...ProcessPendingPurchases");
             var pendingPurchases = _pendingPurchaseManager.GetAllPendingPurchases();
             
             foreach (var purchase in pendingPurchases)
@@ -535,11 +535,15 @@ namespace Balancy.Payments
                 OrderId = result.TransactionId
             };
             
-#if UNITY_EDITOR
-            bool requireValidation = false;
-#else
-            bool requireValidation = true;
-#endif
+#if UNITY_EDITOR                                                                                                                                                                                                                
+            // Editor uses a fake store whose receipts can never pass real Apple/Google                                                                                                                                         
+            // validation, so we always skip server-side validation in editor builds.                                                                                                                                           
+            bool requireValidation = false;                                                                                                                                                                                     
+#else                                                                                                                                                                                                                           
+            On real platforms, default to true but allow opt-out via AppConfig                                                                                                                                               
+            (e.g. for sandbox/testing scenarios that bypass receipt validation).                                                                                                                                             
+            bool requireValidation = Balancy.Controller.Config?.RequireReceiptValidation ?? true;                                                                                                                               
+#endif    
                 
             Balancy.API.FinalizedHardPurchase(ConvertStatusToResult(result.Status), productInfo, paymentInfo, (validationSuccess, removeFromPending) =>
             {
@@ -670,17 +674,17 @@ namespace Balancy.Payments
         {
             _isInitialized = true;
             _isInitializing = false;
-            
-            Debug.Log("Unity IAP v5 initialized successfully");
+
+            Debug.LogWarning($"[BalancyPayments] OnInitializationComplete (Unity IAP v5 initialized), _onInitialized is {(_onInitialized == null ? "null" : "set")}");
 
             // Process any pending purchases
             ProcessPendingPurchases();
-            
+
             // Notify listeners
             var callback = _onInitialized;
             _onInitialized = null;
             _onInitializeFailed = null;
-            
+
             callback?.Invoke();
         }
 
@@ -742,18 +746,38 @@ namespace Balancy.Payments
         }
 
         /// <summary>
+        /// Called when fetching products from the store fails
+        /// </summary>
+        private void OnProductsFetchFailed(ProductFetchFailed failureData)
+        {
+            var failedIds = failureData?.FailedFetchProducts != null
+                ? string.Join(", ", failureData.FailedFetchProducts.Select(p => p.id))
+                : "(null)";
+            var reason = failureData?.FailureReason ?? "(null)";
+            Debug.LogError($"[BalancyPayments] OnProductsFetchFailed: reason='{reason}', failedProducts=[{failedIds}]");
+
+            // Treat the whole initialization attempt as failed so we don't sit in
+            // a half-initialized state forever waiting for OnProductsFetched.
+            _isInitializing = false;
+            var failedCallback = _onInitializeFailed;
+            _onInitialized = null;
+            _onInitializeFailed = null;
+            failedCallback?.Invoke($"Products fetch failed: {reason}");
+        }
+
+        /// <summary>
         /// Called when purchases are successfully fetched
         /// </summary>
         private void OnPurchasesFetched(Orders orders)
         {
-            Debug.Log($"Purchases fetched successfully");
-            
+            Debug.LogWarning($"[BalancyPayments] OnPurchasesFetched: pending orders count = {orders.PendingOrders?.Count() ?? 0}");
+
             // Process any pending orders
             foreach (var pendingOrder in orders.PendingOrders)
             {
                 ProcessPendingOrder(pendingOrder);
             }
-            
+
             // Consider initialization complete
             OnInitializationComplete();
         }
