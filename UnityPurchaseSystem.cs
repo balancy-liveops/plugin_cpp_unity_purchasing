@@ -10,7 +10,9 @@ using UnityEngine.Purchasing;
 using Unity.Services.Core;
 using Unity.Services.Core.Environments;
 using System.Threading.Tasks;
+using UnityEngine.Scripting;
 
+[assembly: AlwaysLinkAssembly]
 namespace Balancy.Payments
 {
     /// <summary>
