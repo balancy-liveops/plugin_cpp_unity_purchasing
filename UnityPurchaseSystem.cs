@@ -540,8 +540,8 @@ namespace Balancy.Payments
             // validation, so we always skip server-side validation in editor builds.                                                                                                                                           
             bool requireValidation = false;                                                                                                                                                                                     
 #else                                                                                                                                                                                                                           
-            On real platforms, default to true but allow opt-out via AppConfig                                                                                                                                               
-            (e.g. for sandbox/testing scenarios that bypass receipt validation).                                                                                                                                             
+            // On real platforms, default to true but allow opt-out via AppConfig                                                                                                                                               
+            // (e.g. for sandbox/testing scenarios that bypass receipt validation).                                                                                                                                             
             bool requireValidation = Balancy.Controller.Config?.RequireReceiptValidation ?? true;                                                                                                                               
 #endif    
                 
