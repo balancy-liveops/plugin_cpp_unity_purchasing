@@ -755,14 +755,6 @@ namespace Balancy.Payments
                 : "(null)";
             var reason = failureData?.FailureReason ?? "(null)";
             Debug.LogError($"[BalancyPayments] OnProductsFetchFailed: reason='{reason}', failedProducts=[{failedIds}]");
-
-            // Treat the whole initialization attempt as failed so we don't sit in
-            // a half-initialized state forever waiting for OnProductsFetched.
-            _isInitializing = false;
-            var failedCallback = _onInitializeFailed;
-            _onInitialized = null;
-            _onInitializeFailed = null;
-            failedCallback?.Invoke($"Products fetch failed: {reason}");
         }
 
         /// <summary>
