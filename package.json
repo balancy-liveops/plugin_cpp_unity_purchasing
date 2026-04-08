@@ -1,7 +1,7 @@
 {
 	"name": "co.balancy.unity-purchasing",
 	"displayName": "Balancy Purchasing",
-	"version": "1.5.2",
+	"version": "1.5.3",
 	"unity": "2022.3",
 	"description": "Purchasing module for Balancy, based on the Unity Purchasing.",
 	"keywords": [
@@ -36,6 +36,7 @@
 		"url": "https://balancy.co/"
 	},
 	"dependencies": {
+        "co.balancy.unity": "1.5.2",
 		"com.unity.purchasing": "5.0.1"
 	},
 	"documentationUrl": "https://en.docsv2.balancy.dev",
