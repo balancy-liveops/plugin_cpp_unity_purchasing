@@ -387,7 +387,12 @@ namespace Balancy.Payments
                 Debug.Log($"Restoring purchases for {Application.platform} platform");
                 _storeController.RestoreTransactions((success, error) => {
                     Debug.Log($"Restore completed. Success: {success}, Error: {error}");
-                    OnRestoreTransactionsComplete(success);
+                    if (!success)
+                    {
+                        // On success, OnPurchasesFetched is triggered by RestoreTransactions
+                        // and handles the results there.
+                        OnRestoreTransactionsComplete(false);
+                    }
                 });
             }
             catch (Exception ex)
@@ -764,7 +769,7 @@ namespace Balancy.Payments
         /// </summary>
         private void OnPurchasesFetched(Orders orders)
         {
-            Debug.LogWarning($"[BalancyPayments] OnPurchasesFetched: pending orders count = {orders.PendingOrders?.Count() ?? 0}");
+            Debug.LogWarning($"[BalancyPayments] OnPurchasesFetched: pending orders count = {orders.PendingOrders?.Count() ?? 0}, confirmed orders count = {orders.ConfirmedOrders?.Count() ?? 0} , deferred orders count = {orders.DeferredOrders?.Count() ?? 0}");
 
             // Process any pending orders
             foreach (var pendingOrder in orders.PendingOrders)
@@ -772,8 +777,45 @@ namespace Balancy.Payments
                 ProcessPendingOrder(pendingOrder);
             }
 
-            // Consider initialization complete
-            OnInitializationComplete();
+            if (_restorePurchasesCallback != null)
+            {
+                // Restored non-consumables arrive as confirmed orders, not pending ones.
+                foreach (var confirmedOrder in orders.ConfirmedOrders)
+                {
+                    if (confirmedOrder?.CartOrdered == null || !confirmedOrder.CartOrdered.Items().Any())
+                        continue;
+
+                    var item = confirmedOrder.CartOrdered.Items().First();
+                    var product = item.Product;
+                    var productId = product.definition.id;
+                    string receipt = confirmedOrder.Info.Receipt;
+                    string store = GetStoreFromReceipt(receipt);
+
+                    _restoredPurchases.Add(new PurchaseResult
+                    {
+                        Status = PurchaseStatus.Success,
+                        ProductId = productId,
+                        Receipt = new PurchaseReceipt
+                        {
+                            ProductId = productId,
+                            TransactionId = confirmedOrder.Info.TransactionID,
+                            Receipt = receipt,
+                            Store = store,
+                            PurchaseTime = DateTime.Now
+                        },
+                        TransactionId = confirmedOrder.Info.TransactionID,
+                        Price = (float)(product?.metadata?.localizedPrice ?? 0.0m),
+                        CurrencyCode = product?.metadata?.isoCurrencyCode ?? "USD",
+                    });
+                }
+
+                OnRestoreTransactionsComplete(true);
+            }
+            else
+            {
+                // Consider initialization complete
+                OnInitializationComplete();
+            }
         }
 
         /// <summary>

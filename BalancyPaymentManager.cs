@@ -84,7 +84,7 @@ namespace Balancy.Payments
         /// <summary>
         /// Event fired when purchases are restored
         /// </summary>
-        public event Action<List<PurchaseResult>> OnPurchasesRestored;
+        public static event Action<List<PurchaseResult>> OnPurchasesRestored;
 
         #endregion
         
