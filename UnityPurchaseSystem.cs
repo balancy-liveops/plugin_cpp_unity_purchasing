@@ -10,7 +10,9 @@ using UnityEngine.Purchasing;
 using Unity.Services.Core;
 using Unity.Services.Core.Environments;
 using System.Threading.Tasks;
+using Balancy.Runtime.Core;
 using UnityEngine.Scripting;
+using SubscriptionInfo = Balancy.Runtime.Core.SubscriptionInfo;
 
 [assembly: AlwaysLinkAssembly]
 namespace Balancy.Payments

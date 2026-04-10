@@ -4,6 +4,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using Balancy.Runtime.Core;
 using UnityEngine;
 
 namespace Balancy.Payments
@@ -80,11 +81,6 @@ namespace Balancy.Payments
         /// Event fired when a purchase is completed
         /// </summary>
         public event Action OnInitialized;
-
-        /// <summary>
-        /// Event fired when purchases are restored
-        /// </summary>
-        public static event Action<List<PurchaseResult>> OnPurchasesRestored;
 
         #endregion
         
@@ -354,7 +350,7 @@ namespace Balancy.Payments
                     }
                     
                     // Fire the event for external listeners
-                    OnPurchasesRestored?.Invoke(results);
+                    Balancy.Callbacks.OnPurchasesRestored?.Invoke(results);
                     
                     // Call the provided callback
                     callback?.Invoke(results);
