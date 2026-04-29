@@ -50,7 +50,14 @@ namespace Balancy.Payments
         private Dictionary<string, ProductDefinition> _productDefinitions = new Dictionary<string, ProductDefinition>();
         
         private PendingPurchaseManager _pendingPurchaseManager => PendingPurchaseManager.Instance;
-        
+
+        // Transaction IDs we have already submitted for validation in this app session.
+        // Prevents OnPurchasesFetched->ProcessPendingOrder and OnInitializationComplete->
+        // ProcessPendingPurchases from both validating the same restart-redelivered
+        // transaction. Cleared on app relaunch so orphan-confirmed entries can still recover.
+        // Main-thread only; no lock needed.
+        private readonly HashSet<string> _validatedInSession = new HashSet<string>();
+
         #endregion
 
         #region Public Properties
@@ -507,6 +514,13 @@ namespace Balancy.Payments
         /// </summary>
         private void ValidatePurchaseReceipt(PendingPurchase purchase)
         {
+            var txId = purchase.TransactionId;
+            if (!string.IsNullOrEmpty(txId) && !_validatedInSession.Add(txId))
+            {
+                Debug.LogWarning($"[BalancyPayments] Skipping duplicate validation for TransactionId={txId} (productId={purchase.ProductInfo?.ProductId}).");
+                return;
+            }
+
             Debug.Log($"Purchase completed for {purchase.ProductInfo.ProductId} TransactionId = " + purchase.TransactionId);
             
             // Create receipt for callback
